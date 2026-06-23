@@ -86,11 +86,3 @@ The backend exposes an MCP server at `http://localhost:8080/sse`. Add it to your
 ```
 
 Claude will then have access to `ingest_repo`, `ask_question`, `generate_document`, `list_projects`, and `check_updates` as tools.
-
-## Configuration
-
-All tuneable values live in `.env`. The defaults are reasonable for most repos. The ones you're most likely to want to change:
-
-- `OPENAI_MODEL` — swap to `gpt-4o` for better quality
-- `MAX_FILES_TO_LOAD` — increase for very large monorepos
-- `ALLOWED_REPO_HOSTS` — add `gitlab.com` or others if needed
