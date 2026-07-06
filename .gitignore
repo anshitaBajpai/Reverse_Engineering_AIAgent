@@ -1,0 +1,41 @@
+# ── Secrets & environment ──────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+
+backend/target/
+
+# Packaged artefacts
+*.jar
+*.war
+# JVM crash dumps
+hs_err_pid*.log
+
+HELP.md
+
+.mvn/wrapper/maven-wrapper.jar
+
+
+node_modules/
+frontend/dist/
+package-lock.json
+
+
+repo/
+*.log
+
+
+.vscode/
+.idea/
+
+
+.factorypath
+.classpath
+.project
+*.swp
+*.swo
+
+
+.DS_Store
+Thumbs.db
