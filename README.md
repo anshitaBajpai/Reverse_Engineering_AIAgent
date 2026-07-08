@@ -25,7 +25,7 @@ Point this tool at any GitHub repository and ask questions about how it works. I
 
 - Java 21
 - Node 18+
-- Docker (for Postgres)
+- Docker
 - An OpenAI API key
 
 ## Getting started
