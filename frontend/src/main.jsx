@@ -14,13 +14,18 @@ async function requestJson(path, options = {}) {
   });
   const text = await response.text();
   const data = parseResponseBody(text);
-  if (!response.ok) throw new Error(getErrorMessage(data, text, response.status));
+  if (!response.ok)
+    throw new Error(getErrorMessage(data, text, response.status));
   return data;
 }
 
 function parseResponseBody(text) {
   if (!text) return null;
-  try { return JSON.parse(text); } catch { return null; }
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
 }
 
 function getErrorMessage(data, text, status) {
@@ -28,124 +33,50 @@ function getErrorMessage(data, text, status) {
   if (data?.detail) return data.detail;
   if (data?.error) return data.error;
   if (data && typeof data === "object") {
-    const msgs = Object.values(data).filter((v) => typeof v === "string" && v.trim());
-    if (msgs.length > 0) return msgs.join(", ");
+    const messages = Object.values(data).filter(
+      (value) => typeof value === "string" && value.trim(),
+    );
+    if (messages.length > 0) return messages.join(", ");
   }
-  if (text?.trim()) return `Server returned ${status}: ${text.trim().slice(0, 240)}`;
+  if (text?.trim())
+    return `Server returned ${status}: ${text.trim().slice(0, 240)}`;
   return `Request failed with status ${status}`;
 }
 
-function normalizeProject(p) {
+function normalizeProject(project) {
   return {
-    project_id: p.project_id ?? p.projectId ?? "",
-    repo_url: p.repo_url ?? p.repoUrl ?? "",
-    ingested_at: p.ingested_at ?? p.ingestedAt ?? "",
-    last_commit_sha: p.last_commit_sha ?? p.lastCommitSha ?? "",
-    files_loaded: p.files_loaded ?? p.filesLoaded ?? 0,
-    chunks_created: p.chunks_created ?? p.chunksCreated ?? 0,
+    project_id: project.project_id ?? project.projectId ?? "",
+    repo_url: project.repo_url ?? project.repoUrl ?? "",
+    ingested_at: project.ingested_at ?? project.ingestedAt ?? "",
+    last_commit_sha: project.last_commit_sha ?? project.lastCommitSha ?? "",
+    files_loaded: project.files_loaded ?? project.filesLoaded ?? 0,
+    chunks_created: project.chunks_created ?? project.chunksCreated ?? 0,
   };
 }
-
-function shortSha(sha) { return sha ? sha.slice(0, 7) : "unknown"; }
 
 function repoNameFromUrl(url) {
   if (!url) return "Unknown repository";
-  const parts = url.replace(/\.git$/, "").split("/").filter(Boolean);
+  const parts = url
+    .replace(/\.git$/, "")
+    .split("/")
+    .filter(Boolean);
   return parts.slice(-2).join("/") || url;
 }
 
-// ── Terminal loader ──────────────────────────────────────────────────────────
+function shortSha(sha) {
+  return sha ? sha.slice(0, 7) : "unknown";
+}
 
-const LOADER_CONFIG = {
-  ingest: {
-    lines: [
-      "Validating repository URL",
-      "Cloning repository via JGit",
-      "Walking file tree",
-      "Chunking source files",
-      "Generating embeddings",
-      "Storing vectors in PGVector",
-    ],
-    interval: 7000,
-  },
-  query: {
-    lines: [
-      "Embedding question",
-      "Similarity search",
-      "Building context window",
-      "Generating answer",
-    ],
-    interval: 3500,
-  },
-  document: {
-    lines: [
-      "Architecture extraction",
-      "Behavior analysis  (parallel)",
-      "Risk & security assessment  (parallel)",
-      "Synthesizing final document",
-    ],
-    interval: 22000,
-  },
+const loaderLines = {
+  ingest: [
+    "Validating repository",
+    "Cloning source",
+    "Chunking files",
+    "Creating embeddings",
+  ],
+  query: ["Embedding question", "Searching context", "Building answer"],
+  document: ["Reading architecture", "Analyzing behavior", "Writing document"],
 };
-
-function TerminalLoader({ action }) {
-  const { lines, interval } = LOADER_CONFIG[action] ?? {
-    lines: ["Processing..."],
-    interval: 2000,
-  };
-  const [active, setActive] = useState(0);
-
-  useEffect(() => { setActive(0); }, [action]);
-
-  useEffect(() => {
-    if (active >= lines.length - 1) return;
-    const t = setTimeout(() => setActive((a) => a + 1), interval);
-    return () => clearTimeout(t);
-  }, [active, interval, lines.length]);
-
-  return (
-    <div className="terminal-loader">
-      <div className="terminal-header">
-        <span className="mac-dot red" />
-        <span className="mac-dot yellow" />
-        <span className="mac-dot green" />
-        <span className="terminal-title">agent process</span>
-      </div>
-      <div className="terminal-body">
-        {lines.map((line, i) => (
-          <div
-            key={line}
-            className={`t-line ${
-              i < active ? "t-done" : i === active ? "t-active" : "t-pending"
-            }`}
-          >
-            <span className="t-icon">
-              {i < active ? "✓" : i === active ? "›" : "·"}
-            </span>
-            <span>{line}</span>
-            {i === active && <span className="t-cursor" />}
-          </div>
-        ))}
-      </div>
-      <div className="terminal-scanline" />
-    </div>
-  );
-}
-
-// ── Source details ───────────────────────────────────────────────────────────
-
-function SourceDetails({ label, sources }) {
-  return (
-    <details className="sources">
-      <summary>{label} ({sources.length})</summary>
-      {sources.map((src, i) => (
-        <pre key={`${src.slice(0, 30)}-${i}`}>{src}</pre>
-      ))}
-    </details>
-  );
-}
-
-// ── App ──────────────────────────────────────────────────────────────────────
 
 function App() {
   const [health, setHealth] = useState("checking");
@@ -166,23 +97,18 @@ function App() {
   const [error, setError] = useState("");
 
   const hasData = projects.length > 0 || !!ingestResult;
-  const scopedProjects = selectedIds.length;
-
-  const canIngest = repoUrl.trim().length > 0;
-  const canAsk = hasData && question.trim().length > 0;
-  const canDocument = hasData && projectName.trim().length > 0;
 
   const statusLabel = useMemo(() => {
     if (health === "ok") return "Backend online";
     if (health === "error") return "Backend offline";
-    return "Checking…";
+    return "Checking backend";
   }, [health]);
 
-  const projectScopeLabel = useMemo(() => {
+  const scopeLabel = useMemo(() => {
     if (!projects.length) return "No projects";
-    if (!scopedProjects) return "All projects";
-    return `${scopedProjects} selected`;
-  }, [projects.length, scopedProjects]);
+    if (!selectedIds.length) return "All projects";
+    return `${selectedIds.length} selected`;
+  }, [projects.length, selectedIds.length]);
 
   useEffect(() => {
     requestJson("/health")
@@ -192,8 +118,8 @@ function App() {
   }, []);
 
   useEffect(() => {
-    const valid = new Set(projects.map((p) => p.project_id));
-    setSelectedIds((cur) => cur.filter((id) => valid.has(id)));
+    const valid = new Set(projects.map((project) => project.project_id));
+    setSelectedIds((current) => current.filter((id) => valid.has(id)));
   }, [projects]);
 
   async function refreshProjects() {
@@ -201,8 +127,8 @@ function App() {
     setProjects(Array.isArray(list) ? list.map(normalizeProject) : []);
   }
 
-  async function handleIngest(e) {
-    e.preventDefault();
+  async function handleIngest(event) {
+    event.preventDefault();
     setError("");
     setActiveAction("ingest");
     setIngestResult(null);
@@ -220,8 +146,8 @@ function App() {
     }
   }
 
-  async function handleQuery(e) {
-    e.preventDefault();
+  async function handleQuery(event) {
+    event.preventDefault();
     setError("");
     setActiveAction("query");
     setAnswer("");
@@ -247,8 +173,8 @@ function App() {
     }
   }
 
-  async function handleDocument(e) {
-    e.preventDefault();
+  async function handleDocument(event) {
+    event.preventDefault();
     setError("");
     setActiveAction("document");
     setAnswer("");
@@ -276,278 +202,304 @@ function App() {
   }
 
   function toggleProject(id) {
-    setSelectedIds((cur) =>
-      cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]
+    setSelectedIds((current) =>
+      current.includes(id)
+        ? current.filter((item) => item !== id)
+        : [...current, id],
     );
   }
 
   function downloadDocument() {
     const blob = new Blob([documentText], { type: "text/markdown" });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${projectName || "reverse-engineering-document"}.md`;
-    a.click();
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${projectName || "reverse-engineering-document"}.md`;
+    anchor.click();
     URL.revokeObjectURL(url);
   }
 
   return (
     <main className="app-shell">
-      {/* ── Header ── */}
       <header className="topbar">
         <div>
-          <p className="eyebrow">// Codebase Intelligence</p>
+          <p className="eyebrow">AI codebase analysis</p>
           <h1>Reverse Engineering AI Agent</h1>
+          <p className="subtitle">
+            Ingest a repository, ask questions, and generate a
+            reverse-engineering document.
+          </p>
         </div>
-        <span className={`status-pill ${health}`}>
-          <span className="status-dot" />
-          {statusLabel}
-        </span>
+        <span className={`status ${health}`}>{statusLabel}</span>
       </header>
 
       {error && (
         <section className="alert" role="alert">
-          <span className="alert-icon">⚠</span> {error}
+          {error}
         </section>
       )}
 
-      <section className="workspace">
-        {/* ── Left column ── */}
-        <div className="left-column">
-          {/* Ingest */}
-          <form className="panel" onSubmit={handleIngest}>
-            <div className="panel-heading">
-              <h2>Ingest Repository</h2>
-              <span className="step-badge">01</span>
-            </div>
+      <section className="layout">
+        <aside className="sidebar">
+          <form className="card" onSubmit={handleIngest}>
+            <CardHeader title="Repository" meta="Step 1" />
             <label>
               GitHub repository URL
               <input
                 value={repoUrl}
-                onChange={(e) => setRepoUrl(e.target.value)}
+                onChange={(event) => setRepoUrl(event.target.value)}
                 placeholder="https://github.com/owner/repo"
                 spellCheck={false}
               />
             </label>
-            <button disabled={!canIngest || activeAction === "ingest"}>
-              {activeAction === "ingest" ? (
-                <><span className="btn-spinner" /> Ingesting…</>
-              ) : (
-                "Ingest"
-              )}
+            <button
+              className="primary"
+              disabled={!repoUrl.trim() || activeAction === "ingest"}
+            >
+              {activeAction === "ingest" ? "Ingesting..." : "Ingest repository"}
             </button>
             {ingestResult && (
-              <div className="result-strip">
-                <span title="Project ID">⬡ {ingestResult.project_id}</span>
-                <span title="HEAD commit">⌥ {shortSha(ingestResult.commit_sha ?? ingestResult.commitSha)}</span>
-                <span>{ingestResult.files_loaded ?? ingestResult.filesLoaded} files</span>
-                <span>{ingestResult.chunks_created ?? ingestResult.chunksCreated} chunks</span>
+              <div className="result">
+                <span>
+                  {ingestResult.files_loaded ?? ingestResult.filesLoaded} files
+                </span>
+                <span>
+                  {ingestResult.chunks_created ?? ingestResult.chunksCreated}{" "}
+                  chunks
+                </span>
+                <span>
+                  {shortSha(ingestResult.commit_sha ?? ingestResult.commitSha)}
+                </span>
               </div>
             )}
           </form>
 
-          {/* Project scope */}
-          {projects.length > 0 && (
-            <section className="panel">
-              <div className="panel-heading">
-                <h2>Project Scope</h2>
-                <span className="step-badge">{projectScopeLabel}</span>
-              </div>
-              <p className="panel-notice">
-                Selected projects scope Ask &amp; Document. Clear to search all.
+          <section className="card">
+            <CardHeader title="Project scope" meta={scopeLabel} />
+            {!projects.length && (
+              <p className="muted">
+                Ingest a repository to create a project scope.
               </p>
-              <div className="project-actions">
-                <button
-                  type="button"
-                  className="secondary-button"
-                  onClick={() => setSelectedIds(projects.map((p) => p.project_id))}
-                  disabled={selectedIds.length === projects.length}
-                >
-                  Select all
-                </button>
-                <button
-                  type="button"
-                  className="secondary-button"
-                  onClick={() => setSelectedIds([])}
-                  disabled={selectedIds.length === 0}
-                >
-                  Clear
-                </button>
-              </div>
-              <div className="project-list">
-                {projects.map((p, idx) => (
-                  <label
-                    className="project-option"
-                    key={p.project_id}
-                    style={{ animationDelay: `${idx * 60}ms` }}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={selectedIds.includes(p.project_id)}
-                      onChange={() => toggleProject(p.project_id)}
-                    />
-                    <span>
-                      <strong>{repoNameFromUrl(p.repo_url)}</strong>
-                      <small>{p.project_id}</small>
-                      <small>
-                        {p.files_loaded} files · {p.chunks_created} chunks · {shortSha(p.last_commit_sha)}
-                      </small>
-                    </span>
-                  </label>
-                ))}
-              </div>
-            </section>
-          )}
-
-          {/* Query */}
-          <form className="panel" onSubmit={handleQuery}>
-            <div className="panel-heading">
-              <h2>Ask Questions</h2>
-              <span className="step-badge">02</span>
-            </div>
-            {!hasData && <p className="panel-notice">Ingest a repository first.</p>}
-            <label>
-              Question
-              <textarea
-                value={question}
-                onChange={(e) => setQuestion(e.target.value)}
-                placeholder="Explain the main architecture and request flow"
-                rows={5}
-                disabled={!hasData}
-              />
-            </label>
-            <label>
-              Context chunks
-              <input
-                type="number"
-                min="1"
-                max="20"
-                value={queryK}
-                onChange={(e) => setQueryK(e.target.value)}
-                disabled={!hasData}
-              />
-            </label>
-            <button disabled={!canAsk || activeAction === "query"}>
-              {activeAction === "query" ? (
-                <><span className="btn-spinner" /> Thinking…</>
-              ) : (
-                "Ask"
-              )}
-            </button>
-          </form>
-
-          {/* Document */}
-          <form className="panel" onSubmit={handleDocument}>
-            <div className="panel-heading">
-              <h2>Generate RE Document</h2>
-              <span className="step-badge">03</span>
-            </div>
-            {!hasData && <p className="panel-notice">Ingest a repository first.</p>}
-            <label>
-              Project name
-              <input
-                value={projectName}
-                onChange={(e) => setProjectName(e.target.value)}
-                placeholder="My Project"
-                disabled={!hasData}
-              />
-            </label>
-            <label>
-              Context chunks
-              <input
-                type="number"
-                min="5"
-                max="40"
-                value={documentK}
-                onChange={(e) => setDocumentK(e.target.value)}
-                disabled={!hasData}
-              />
-            </label>
-            <button disabled={!canDocument || activeAction === "document"}>
-              {activeAction === "document" ? (
-                <><span className="btn-spinner" /> Generating…</>
-              ) : (
-                "Generate Report"
-              )}
-            </button>
-          </form>
-        </div>
-
-        {/* ── Output area ── */}
-        <section className="output-area">
-          <div className="output-header">
-            <div>
-              <p className="eyebrow">// Output</p>
-              <h2>Analysis Output</h2>
-            </div>
-            {documentText && (
-              <button className="secondary-button" onClick={downloadDocument}>
-                ↓ Download .md
-              </button>
             )}
+            {projects.length > 0 && (
+              <>
+                <div className="scope-actions">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setSelectedIds(
+                        projects.map((project) => project.project_id),
+                      )
+                    }
+                  >
+                    Select all
+                  </button>
+                  <button type="button" onClick={() => setSelectedIds([])}>
+                    Clear
+                  </button>
+                </div>
+                <div className="project-list">
+                  {projects.map((project) => (
+                    <label className="project-item" key={project.project_id}>
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.includes(project.project_id)}
+                        onChange={() => toggleProject(project.project_id)}
+                      />
+                      <span>
+                        <strong>{repoNameFromUrl(project.repo_url)}</strong>
+                        <small>
+                          {project.files_loaded} files ·{" "}
+                          {project.chunks_created} chunks ·{" "}
+                          {shortSha(project.last_commit_sha)}
+                        </small>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </>
+            )}
+          </section>
+        </aside>
+
+        <section className="main-panel">
+          <div className="actions-grid">
+            <form className="card" onSubmit={handleQuery}>
+              <CardHeader title="Ask" meta="RAG answer" />
+              <label>
+                Question
+                <textarea
+                  value={question}
+                  onChange={(event) => setQuestion(event.target.value)}
+                  placeholder="Explain the main architecture and request flow"
+                  rows={4}
+                  disabled={!hasData}
+                />
+              </label>
+              <div className="inline-row">
+                <label>
+                  Chunks
+                  <input
+                    type="number"
+                    min="1"
+                    max="20"
+                    value={queryK}
+                    onChange={(event) => setQueryK(event.target.value)}
+                    disabled={!hasData}
+                  />
+                </label>
+                <button
+                  className="primary"
+                  disabled={
+                    !hasData || !question.trim() || activeAction === "query"
+                  }
+                >
+                  {activeAction === "query" ? "Thinking..." : "Ask"}
+                </button>
+              </div>
+            </form>
+
+            <form className="card" onSubmit={handleDocument}>
+              <CardHeader title="Document" meta="Markdown report" />
+              <label>
+                Project name
+                <input
+                  value={projectName}
+                  onChange={(event) => setProjectName(event.target.value)}
+                  placeholder="My Project"
+                  disabled={!hasData}
+                />
+              </label>
+              <div className="inline-row">
+                <label>
+                  Chunks
+                  <input
+                    type="number"
+                    min="5"
+                    max="40"
+                    value={documentK}
+                    onChange={(event) => setDocumentK(event.target.value)}
+                    disabled={!hasData}
+                  />
+                </label>
+                <button
+                  className="primary"
+                  disabled={
+                    !hasData ||
+                    !projectName.trim() ||
+                    activeAction === "document"
+                  }
+                >
+                  {activeAction === "document" ? "Generating..." : "Generate"}
+                </button>
+              </div>
+            </form>
           </div>
 
-          <div className="output-body">
-            {/* Loading */}
-            {activeAction && <TerminalLoader action={activeAction} />}
+          <section className="output card">
+            <div className="output-header">
+              <CardHeader title="Output" meta={activeAction || "Ready"} />
+              {documentText && (
+                <button type="button" onClick={downloadDocument}>
+                  Download .md
+                </button>
+              )}
+            </div>
 
-            {/* Empty state */}
+            {activeAction && <Loader action={activeAction} />}
+
             {!activeAction && !answer && !documentText && (
-              <div className="empty-state">
-                <div className="empty-icon">⬡</div>
-                <div>
-                  <p>Ready for analysis</p>
-                  <p className="empty-sub">
-                    Ingest a repo, ask a question, or generate a reverse-engineering document.
-                  </p>
-                </div>
+              <div className="empty">
+                <strong>Ready for analysis</strong>
+                <span>
+                  Connect a repository, then ask a question or generate
+                  documentation.
+                </span>
               </div>
             )}
 
-            {/* Answer */}
-            {answer && (
-              <article className="markdown-output">
-                <div className="output-section-header">
-                  <span className="output-section-label">answer</span>
-                </div>
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{answer}</ReactMarkdown>
-              </article>
-            )}
-
+            {answer && <MarkdownOutput label="Answer" text={answer} />}
             {answer && querySources.length > 0 && (
               <SourceDetails label="Answer sources" sources={querySources} />
             )}
 
-            {/* Document */}
             {documentText && (
-              <article className="markdown-output">
-                <div className="output-section-header">
-                  <span className="output-section-label">reverse engineering document</span>
-                </div>
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{documentText}</ReactMarkdown>
-              </article>
+              <MarkdownOutput label="Document" text={documentText} />
             )}
-
-            {chainSteps.length > 0 && (
-              <details className="chain-steps">
-                <summary>Prompt chain artifacts ({chainSteps.length})</summary>
-                {chainSteps.map((step) => (
-                  <article key={step.name}>
-                    <h3>{step.name.replaceAll("_", " ")}</h3>
-                    <p>{step.description}</p>
-                    <pre>{step.content}</pre>
-                  </article>
-                ))}
-              </details>
-            )}
-
+            {chainSteps.length > 0 && <ChainSteps steps={chainSteps} />}
             {documentText && documentSources.length > 0 && (
-              <SourceDetails label="Document sources" sources={documentSources} />
+              <SourceDetails
+                label="Document sources"
+                sources={documentSources}
+              />
             )}
-          </div>
+          </section>
         </section>
       </section>
     </main>
+  );
+}
+
+function CardHeader({ title, meta }) {
+  return (
+    <div className="card-header">
+      <h2>{title}</h2>
+      <span>{meta}</span>
+    </div>
+  );
+}
+
+function Loader({ action }) {
+  const lines = loaderLines[action] || ["Processing"];
+  return (
+    <div className="loader">
+      {lines.map((line, index) => (
+        <div
+          key={line}
+          className={index === 1 ? "active" : index < 1 ? "done" : ""}
+        >
+          <span>{index < 1 ? "✓" : index === 1 ? "›" : "·"}</span>
+          {line}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function MarkdownOutput({ label, text }) {
+  return (
+    <article className="markdown-output">
+      <span className="output-label">{label}</span>
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+    </article>
+  );
+}
+
+function ChainSteps({ steps }) {
+  return (
+    <details className="sources">
+      <summary>Prompt chain artifacts ({steps.length})</summary>
+      {steps.map((step) => (
+        <article className="chain-step" key={step.name}>
+          <h3>{step.name.replaceAll("_", " ")}</h3>
+          <p>{step.description}</p>
+          <pre>{step.content}</pre>
+        </article>
+      ))}
+    </details>
+  );
+}
+
+function SourceDetails({ label, sources }) {
+  return (
+    <details className="sources">
+      <summary>
+        {label} ({sources.length})
+      </summary>
+      {sources.map((source, index) => (
+        <pre key={`${source.slice(0, 30)}-${index}`}>{source}</pre>
+      ))}
+    </details>
   );
 }
 
