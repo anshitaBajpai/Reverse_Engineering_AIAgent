@@ -8,10 +8,20 @@ const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8080";
 
 async function requestJson(path, options = {}) {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
-    ...options,
-  });
+  let response;
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      headers: {
+        "Content-Type": "application/json",
+        ...(options.headers || {}),
+      },
+      ...options,
+    });
+  } catch {
+    throw new Error(
+      `Cannot reach backend at ${API_BASE_URL}. Start the backend and try again.`,
+    );
+  }
   const text = await response.text();
   const data = parseResponseBody(text);
   if (!response.ok)
@@ -219,6 +229,8 @@ function App() {
     URL.revokeObjectURL(url);
   }
 
+  const backendOffline = health === "error";
+
   return (
     <main className="app-shell">
       <header className="topbar">
@@ -254,10 +266,18 @@ function App() {
             </label>
             <button
               className="primary"
-              disabled={!repoUrl.trim() || activeAction === "ingest"}
+              disabled={
+                backendOffline || !repoUrl.trim() || activeAction === "ingest"
+              }
             >
               {activeAction === "ingest" ? "Ingesting..." : "Ingest repository"}
             </button>
+            {backendOffline && (
+              <p className="muted">
+                Backend is offline. Start the Spring Boot server on port 8080
+                before ingesting a repository.
+              </p>
+            )}
             {ingestResult && (
               <div className="result">
                 <span>
