@@ -27,7 +27,7 @@ public class WebConfig implements WebMvcConfigurer {
         String[] origins = props.allowedOrigins().toArray(String[]::new);
         registry.addMapping("/**")
                 .allowedOrigins(origins)
-                .allowedMethods("GET", "POST", "OPTIONS")
+                .allowedMethods("GET", "POST", "DELETE", "OPTIONS")
                 .allowedHeaders("Content-Type")
                 .allowCredentials(false);
     }
@@ -48,8 +48,11 @@ public class WebConfig implements WebMvcConfigurer {
                     try {
                         long size = Long.parseLong(cl.strip());
                         if (size > MAX_BODY_BYTES) {
-                            res.sendError(HttpServletResponse.SC_REQUEST_ENTITY_TOO_LARGE,
-                                    "Request body too large (max 1 MB)");
+                            res.setStatus(HttpServletResponse.SC_REQUEST_ENTITY_TOO_LARGE);
+                            res.setContentType("application/json");
+                            res.getWriter().write("""
+                                    {"status":413,"error":"Payload Too Large","message":"Request body too large (max 1 MB)","path":"%s","fields":{}}
+                                    """.formatted(req.getRequestURI()));
                             return;
                         }
                     } catch (NumberFormatException ignored) {
