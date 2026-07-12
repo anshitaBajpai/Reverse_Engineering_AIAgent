@@ -6,23 +6,49 @@ import "./styles.css";
 
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8080";
+const REQUEST_TIMEOUT_MS = 300000;
 
 async function requestJson(path, options = {}) {
+  const {
+    timeoutMs = REQUEST_TIMEOUT_MS,
+    headers = {},
+    signal,
+    ...fetchOptions
+  } = options;
+  const controller = new AbortController();
+  const abortRequest = () => controller.abort();
+  if (signal?.aborted) controller.abort();
+  signal?.addEventListener("abort", abortRequest, { once: true });
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
   let response;
   try {
     response = await fetch(`${API_BASE_URL}${path}`, {
       headers: {
         "Content-Type": "application/json",
-        ...(options.headers || {}),
+        ...headers,
       },
-      ...options,
+      ...fetchOptions,
+      signal: controller.signal,
     });
-  } catch {
-    throw new Error(
-      `Cannot reach backend at ${API_BASE_URL}. Start the backend and try again.`,
-    );
+  } catch (err) {
+    if (err.name === "AbortError") {
+      throw new Error("The request took too long. Please try again.");
+    }
+    throw new Error(getNetworkErrorMessage(err));
+  } finally {
+    window.clearTimeout(timeoutId);
+    signal?.removeEventListener("abort", abortRequest);
   }
-  const text = await response.text();
+
+  let text = "";
+  try {
+    text = await response.text();
+  } catch {
+    if (!response.ok) {
+      throw new Error(`Request failed with status ${response.status}`);
+    }
+    return null;
+  }
   const data = parseResponseBody(text);
   if (!response.ok)
     throw new Error(getErrorMessage(data, text, response.status));
@@ -39,6 +65,9 @@ function parseResponseBody(text) {
 }
 
 function getErrorMessage(data, text, status) {
+  const fieldMessage = formatFieldErrors(data?.fields || data?.violations);
+  if (fieldMessage) return fieldMessage;
+  if (data?.message && data?.error) return `${data.message}`;
   if (data?.message) return data.message;
   if (data?.detail) return data.detail;
   if (data?.error) return data.error;
@@ -51,6 +80,21 @@ function getErrorMessage(data, text, status) {
   if (text?.trim())
     return `Server returned ${status}: ${text.trim().slice(0, 240)}`;
   return `Request failed with status ${status}`;
+}
+
+function formatFieldErrors(fields) {
+  if (!fields || typeof fields !== "object") return "";
+  return Object.entries(fields)
+    .filter(([, message]) => typeof message === "string" && message.trim())
+    .map(([field, message]) => `${field}: ${message}`)
+    .join(", ");
+}
+
+function getNetworkErrorMessage(err) {
+  if (err instanceof TypeError) {
+    return `Cannot reach backend at ${API_BASE_URL}. Start the backend and try again.`;
+  }
+  return err?.message || "Network request failed. Please try again.";
 }
 
 function normalizeProject(project) {
