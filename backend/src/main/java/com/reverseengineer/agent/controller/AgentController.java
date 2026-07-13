@@ -208,6 +208,10 @@ public class AgentController {
                         "Project '" + projectId + "' not found."));
 
         GitHubService.RepoStatus ghStatus = gitHub.getStatus(info.repoUrl());
+        if (ghStatus.latestCommitSha() == null) {
+            throw new ResponseStatusException(SERVICE_UNAVAILABLE,
+                    "Could not determine latest GitHub commit for project '" + projectId + "'.");
+        }
 
         boolean hasNew = info.lastCommitSha() != null
                 && ghStatus.latestCommitSha() != null
@@ -248,13 +252,17 @@ public class AgentController {
 
     private static String getClientIp(HttpServletRequest req) {
         String forwarded = req.getHeader("X-Forwarded-For");
-        if (forwarded != null && !forwarded.isBlank()) {
+        if (isTrustedProxy(req.getRemoteAddr()) && forwarded != null && !forwarded.isBlank()) {
             return forwarded.split(",")[0].strip();
         }
         return req.getRemoteAddr();
     }
+
+    private static boolean isTrustedProxy(String remoteAddr) {
+        return "127.0.0.1".equals(remoteAddr)
+                || "0:0:0:0:0:0:0:1".equals(remoteAddr)
+                || "::1".equals(remoteAddr);
+    }
 }
-
-
 
 
