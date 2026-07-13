@@ -10,13 +10,16 @@ import org.springframework.web.client.RestClient;
 import java.net.URI;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Service
 public class GitHubService {
 
     private static final Logger log = LoggerFactory.getLogger(GitHubService.class);
+    private static final long STATUS_CACHE_TTL_MS = 60_000L;
 
     private final RestClient restClient;
+    private final ConcurrentHashMap<String, CachedStatus> statusCache = new ConcurrentHashMap<>();
 
     public GitHubService(AppProperties props) {
         var builder = RestClient.builder()
@@ -48,7 +51,15 @@ public class GitHubService {
         }
     }
 
+    private record CachedStatus(RepoStatus status, long expiresAtMillis) {}
+
     public RepoStatus getStatus(String repoUrl) {
+        CachedStatus cached = statusCache.get(repoUrl);
+        long now = System.currentTimeMillis();
+        if (cached != null && cached.expiresAtMillis() > now) {
+            return cached.status();
+        }
+
         try {
             String[] coords = parseCoords(repoUrl);
             String owner = coords[0], repo = coords[1];
@@ -83,7 +94,9 @@ public class GitHubService {
                     .body(new ParameterizedTypeReference<List<Map<String, Object>>>() {});
             int branchCount = branches != null ? branches.size() : 0;
 
-            return new RepoStatus(defaultBranch, latestSha, prCount, branchCount, pushedAt);
+            RepoStatus status = new RepoStatus(defaultBranch, latestSha, prCount, branchCount, pushedAt);
+            statusCache.put(repoUrl, new CachedStatus(status, now + STATUS_CACHE_TTL_MS));
+            return status;
 
         } catch (Exception e) {
             log.warn("GitHub API unavailable for {}: {}", repoUrl, e.getMessage());
