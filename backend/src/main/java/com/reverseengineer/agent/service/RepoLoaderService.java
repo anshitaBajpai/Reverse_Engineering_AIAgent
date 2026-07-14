@@ -45,6 +45,10 @@ public class RepoLoaderService {
         this.props = props;
     }
 
+    public Path projectPath(String projectId) {
+        return Path.of(props.repoDir()).resolve(projectId).normalize();
+    }
+
     public void validateRepoUrl(String repoUrl) {
         URI uri = URI.create(repoUrl);
         String host = uri.getHost();
@@ -182,6 +186,16 @@ public class RepoLoaderService {
         }
 
         return sb.toString();
+    }
+
+    public void deleteProjectClone(String projectId) {
+        Path path = projectPath(projectId);
+        try {
+            deleteDirectory(path);
+            log.info("Deleted local clone for project '{}' at {}", projectId, path);
+        } catch (IOException e) {
+            log.warn("Could not delete local clone for project '{}': {}", projectId, e.getMessage());
+        }
     }
 
     private static boolean isCodeFile(Path file) {
