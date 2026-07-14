@@ -84,7 +84,7 @@ public class RagService {
         try {
             repoLoader.validateRepoUrl(repoUrl);
             String projectId = ProjectRegistry.toProjectId(repoUrl);
-            Path localPath = Path.of(props.repoDir());
+            Path localPath = repoLoader.projectPath(projectId);
             log.info("Cloning into {} (project_id={})", localPath, projectId);
 
             String commitSha = repoLoader.cloneRepo(repoUrl, localPath);
@@ -128,6 +128,7 @@ public class RagService {
 
     public Map<String, Object> askQuestion(String question, int k, List<String> projectIds) {
         requireIngested();
+        requireKnownProjects(projectIds);
         SearchRequest request = buildSearchRequest(question, k, projectIds);
         List<Document> results = vectorStore.similaritySearch(request);
         List<String> formatted = results.stream().map(this::formatChunk).toList();
@@ -139,6 +140,7 @@ public class RagService {
     public Map<String, Object> generateDocument(String projectName, int k,
                                                  List<String> projectIds) {
         requireIngested();
+        requireKnownProjects(projectIds);
 
         String[] retrievalQueries = {
                 "application entry points startup initialization routing controllers API endpoints",
@@ -160,16 +162,16 @@ public class RagService {
         int cap = Math.min(k, Math.min(deduped.size(), props.maxDocumentK()));
         deduped = deduped.subList(0, cap);
 
-        List<String> scopedUrls = projectIds.isEmpty()
-                ? registry.findAll().stream().map(ProjectInfo::repoUrl).toList()
+        List<ProjectInfo> scopedProjects = projectIds.isEmpty()
+                ? registry.findAll()
                 : registry.findAll().stream()
                         .filter(p -> projectIds.contains(p.projectId()))
-                        .map(ProjectInfo::repoUrl).toList();
+                        .toList();
 
         StringBuilder treeSection = new StringBuilder("## Repository Trees\n");
-        for (String url : scopedUrls) {
-            treeSection.append("\n### ").append(url).append("\n");
-            treeSection.append(repoLoader.buildRepoTree(Path.of(props.repoDir())));
+        for (ProjectInfo project : scopedProjects) {
+            treeSection.append("\n### ").append(project.repoUrl()).append("\n");
+            treeSection.append(repoLoader.buildRepoTree(repoLoader.projectPath(project.projectId())));
         }
 
         List<String> formatted = deduped.stream().map(this::formatChunk).toList();
@@ -198,7 +200,11 @@ public class RagService {
         } catch (Exception e) {
             log.warn("Could not delete vector store data for '{}': {}", projectId, e.getMessage());
         }
-        return registry.remove(projectId);
+        boolean removed = registry.remove(projectId);
+        if (removed) {
+            repoLoader.deleteProjectClone(projectId);
+        }
+        return removed;
     }
 
     private static SearchRequest buildSearchRequest(String query, int k,
@@ -239,6 +245,18 @@ public class RagService {
             throw new IllegalArgumentException(
                     "No repository has been ingested yet. "
                     + "Call the /ingest endpoint first.");
+        }
+    }
+
+    private void requireKnownProjects(List<String> projectIds) {
+        if (projectIds == null || projectIds.isEmpty()) {
+            return;
+        }
+        for (String projectId : projectIds) {
+            if (registry.findById(projectId).isEmpty()) {
+                throw new IllegalArgumentException(
+                        "Project '" + projectId + "' not found.");
+            }
         }
     }
 
