@@ -71,7 +71,12 @@ public class RateLimiterService {
 
     public boolean isAllowed(String ip, Endpoint endpoint) {
         if (redisEnabled) {
-            return isAllowedRedis(ip, endpoint);
+            try {
+                return isAllowedRedis(ip, endpoint);
+            } catch (Exception e) {
+                log.warn("Redis rate limiter unavailable, falling back to in-memory limiter: {}",
+                        e.getMessage());
+            }
         }
         return isAllowedInMemory(ip, endpoint);
     }
