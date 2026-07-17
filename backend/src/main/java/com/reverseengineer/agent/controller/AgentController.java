@@ -30,19 +30,22 @@ public class AgentController {
     private final GitHubService gitHub;
     private final ProjectRegistry registry;
     private final AsyncJobService asyncJobs;
+    private final UsageGuardService usageGuard;
 
     public AgentController(RagService ragService,
                            AppProperties props,
                            RateLimiterService rateLimiter,
                            GitHubService gitHub,
                            ProjectRegistry registry,
-                           AsyncJobService asyncJobs) {
+                           AsyncJobService asyncJobs,
+                           UsageGuardService usageGuard) {
         this.ragService   = ragService;
         this.props        = props;
         this.rateLimiter  = rateLimiter;
         this.gitHub       = gitHub;
         this.registry     = registry;
         this.asyncJobs    = asyncJobs;
+        this.usageGuard   = usageGuard;
     }
 
     @GetMapping("/health")
@@ -109,6 +112,8 @@ public class AgentController {
     public ResponseEntity<QueryResponse> query(@Valid @RequestBody QueryRequest body,
                                                 HttpServletRequest httpReq) {
         checkRateLimit(httpReq, RateLimiterService.Endpoint.QUERY);
+        String identity = getClientIp(httpReq);
+        checkUsageBudget(identity);
         int k = Math.min(body.k(), props.maxQueryK());
 
         if (body.question().length() > props.maxQuestionLength()) {
@@ -118,7 +123,7 @@ public class AgentController {
 
         try {
             Map<String, Object> result = ragService.askQuestion(
-                    body.question(), k, body.projectIds());
+                    body.question(), k, body.projectIds(), identity);
             @SuppressWarnings("unchecked")
             List<String> sources = (List<String>) result.get("sources");
             return ResponseEntity.ok(new QueryResponse(
@@ -135,6 +140,8 @@ public class AgentController {
     public ResponseEntity<DocumentResponse> document(@Valid @RequestBody DocumentRequest body,
                                                       HttpServletRequest httpReq) {
         checkRateLimit(httpReq, RateLimiterService.Endpoint.DOCUMENT);
+        String identity = getClientIp(httpReq);
+        checkUsageBudget(identity);
 
         String projectName = CONTROL_CHARS.matcher(body.projectName()).replaceAll(" ")
                 .replaceAll(" {2,}", " ").strip();
@@ -150,7 +157,7 @@ public class AgentController {
 
         try {
             Map<String, Object> result = ragService.generateDocument(
-                    projectName, k, body.projectIds());
+                    projectName, k, body.projectIds(), identity);
             @SuppressWarnings("unchecked")
             List<Map<String, String>> chainSteps =
                     (List<Map<String, String>>) result.get("chain_steps");
@@ -275,6 +282,13 @@ public class AgentController {
         if (!rateLimiter.isAllowed(getClientIp(req), endpoint)) {
             throw new ResponseStatusException(TOO_MANY_REQUESTS,
                     "Rate limit exceeded. Please try again later.");
+        }
+    }
+
+    private void checkUsageBudget(String identity) {
+        if (!usageGuard.isWithinBudget(identity)) {
+            throw new ResponseStatusException(TOO_MANY_REQUESTS,
+                    "Daily OpenAI usage budget exceeded. Please try again tomorrow.");
         }
     }
 
