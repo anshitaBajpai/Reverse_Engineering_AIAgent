@@ -18,7 +18,8 @@ public record AppProperties(
         int maxQuestionLength,
         int maxProjectNameLength,
         String githubToken,
-        Llm llm
+        Llm llm,
+        Usage usage
 ) {
     public record Llm(
             double queryTemperature,
@@ -27,5 +28,12 @@ public record AppProperties(
             int queryMaxTokens,
             int chainMaxTokens,
             int synthesisMaxTokens
+    ) {}
+
+   
+    public record Usage(
+            long dailyTokenBudget,
+            double promptCostPer1kTokens,
+            double completionCostPer1kTokens
     ) {}
 }
