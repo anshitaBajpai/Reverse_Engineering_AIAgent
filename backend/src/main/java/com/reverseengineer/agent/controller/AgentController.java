@@ -29,17 +29,20 @@ public class AgentController {
     private final RateLimiterService rateLimiter;
     private final GitHubService gitHub;
     private final ProjectRegistry registry;
+    private final AsyncJobService asyncJobs;
 
     public AgentController(RagService ragService,
                            AppProperties props,
                            RateLimiterService rateLimiter,
                            GitHubService gitHub,
-                           ProjectRegistry registry) {
+                           ProjectRegistry registry,
+                           AsyncJobService asyncJobs) {
         this.ragService   = ragService;
         this.props        = props;
         this.rateLimiter  = rateLimiter;
         this.gitHub       = gitHub;
         this.registry     = registry;
+        this.asyncJobs    = asyncJobs;
     }
 
     @GetMapping("/health")
@@ -75,6 +78,31 @@ public class AgentController {
             throw new ResponseStatusException(INTERNAL_SERVER_ERROR,
                     "Repository ingestion failed.");
         }
+    }
+
+    @PostMapping("/ingest/async")
+    public ResponseEntity<AsyncJobInfo> ingestAsync(@Valid @RequestBody IngestRequest body,
+                                                      HttpServletRequest httpReq) {
+        checkRateLimit(httpReq, RateLimiterService.Endpoint.INGEST);
+        String repoUrl = body.repoUrl();
+        AsyncJobInfo job = asyncJobs.submit("ingest", () -> {
+            try {
+                return ragService.ingestRepo(repoUrl);
+            } catch (Exception e) {
+                throw new RuntimeException(e.getMessage(), e);
+            }
+        });
+        return ResponseEntity.accepted()
+                .location(URI.create("/jobs/" + job.jobId()))
+                .body(job);
+    }
+
+    @GetMapping("/jobs/{jobId}")
+    public ResponseEntity<AsyncJobInfo> jobStatus(@PathVariable String jobId) {
+        AsyncJobInfo job = asyncJobs.findById(jobId)
+                .orElseThrow(() -> new ResponseStatusException(NOT_FOUND,
+                        "Job '" + jobId + "' not found."));
+        return ResponseEntity.ok(job);
     }
 
     @PostMapping("/query")
