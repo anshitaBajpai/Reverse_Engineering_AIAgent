@@ -5,6 +5,8 @@ import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.metadata.Usage;
+import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.stereotype.Service;
 
@@ -39,14 +41,16 @@ public class LlmService {
 
     private final ChatClient chatClient;
     private final AppProperties props;
+    private final UsageGuardService usageGuard;
 
     // Virtual threads are ideal here: each task blocks on an OpenAI HTTP call.
     private final ExecutorService parallelExecutor =
             Executors.newVirtualThreadPerTaskExecutor();
 
-    public LlmService(ChatClient.Builder builder, AppProperties props) {
+    public LlmService(ChatClient.Builder builder, AppProperties props, UsageGuardService usageGuard) {
         this.chatClient = builder.build();
         this.props = props;
+        this.usageGuard = usageGuard;
     }
 
     @PreDestroy
@@ -54,7 +58,7 @@ public class LlmService {
         parallelExecutor.close();
     }
 
-    public String askLlm(String question, String context) {
+    public String askLlm(String question, String context, String identity) {
         AppProperties.Llm llm = props.llm();
         String userPrompt = """
                 Use the following code context to answer the question.
@@ -68,12 +72,12 @@ public class LlmService {
         log.info("Sending query to OpenAI ...");
         String answer = chatCompletion(
                 QUERY_SYSTEM_PROMPT, userPrompt,
-                llm.queryTemperature(), llm.queryMaxTokens());
+                llm.queryTemperature(), llm.queryMaxTokens(), identity);
         log.info("Received query response ({} chars).", answer.length());
         return answer;
     }
 
-    public Map<String, Object> runReverseEngineeringChain(String context, String projectName) {
+    public Map<String, Object> runReverseEngineeringChain(String context, String projectName, String identity) {
         AppProperties.Llm llm = props.llm();
 
         String architecturePrompt = """
@@ -142,21 +146,21 @@ public class LlmService {
                 () -> {
                     log.info("Chain step 1/4: architecture_extraction");
                     return chatCompletion(CHAIN_SYSTEM_PROMPT, architecturePrompt,
-                            llm.chainTemperature(), llm.chainMaxTokens());
+                            llm.chainTemperature(), llm.chainMaxTokens(), identity);
                 }, parallelExecutor);
 
         CompletableFuture<String> behavFuture = CompletableFuture.supplyAsync(
                 () -> {
                     log.info("Chain step 2/4: behavior_extraction");
                     return chatCompletion(CHAIN_SYSTEM_PROMPT, behaviorPrompt,
-                            llm.chainTemperature(), llm.chainMaxTokens());
+                            llm.chainTemperature(), llm.chainMaxTokens(), identity);
                 }, parallelExecutor);
 
         CompletableFuture<String> riskFuture = CompletableFuture.supplyAsync(
                 () -> {
                     log.info("Chain step 3/4: risk_extraction");
                     return chatCompletion(CHAIN_SYSTEM_PROMPT, riskPrompt,
-                            llm.chainTemperature(), llm.chainMaxTokens());
+                            llm.chainTemperature(), llm.chainMaxTokens(), identity);
                 }, parallelExecutor);
 
         String architectureFindings, behaviorFindings, riskFindings;
@@ -232,7 +236,7 @@ public class LlmService {
         log.info("Chain step 4/4: final_synthesis");
         String document = chatCompletion(
                 CHAIN_SYSTEM_PROMPT, synthesisPrompt,
-                llm.synthesisTemperature(), llm.synthesisMaxTokens());
+                llm.synthesisTemperature(), llm.synthesisMaxTokens(), identity);
         log.info("Generated document ({} chars).", document.length());
 
         List<Map<String, String>> chainSteps = List.of(
@@ -254,17 +258,24 @@ public class LlmService {
     }
 
     private String chatCompletion(String systemPrompt, String userPrompt,
-                                   double temperature, int maxTokens) {
+                                   double temperature, int maxTokens, String identity) {
         var options = OpenAiChatOptions.builder()
                 .temperature(temperature)
                 .maxTokens(maxTokens)
                 .build();
 
-        return chatClient.prompt()
+        ChatResponse response = chatClient.prompt()
                 .options(options)
                 .system(systemPrompt)
                 .user(userPrompt)
                 .call()
-                .content();
+                .chatResponse();
+
+        Usage usage = response.getMetadata().getUsage();
+        usageGuard.recordUsage(identity,
+                usage.getPromptTokens() != null ? usage.getPromptTokens() : 0,
+                usage.getCompletionTokens() != null ? usage.getCompletionTokens() : 0);
+
+        return response.getResult().getOutput().getText();
     }
 }
