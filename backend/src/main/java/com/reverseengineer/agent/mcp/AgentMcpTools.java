@@ -19,6 +19,10 @@ public class AgentMcpTools {
 
     private static final Logger log = LoggerFactory.getLogger(AgentMcpTools.class);
 
+    // The MCP transport has no per-caller HTTP identity, so all MCP-originated
+    // LLM usage is tracked and budgeted as a single shared identity.
+    private static final String MCP_IDENTITY = "mcp";
+
     private final RagService ragService;
     private final GitHubService gitHub;
     private final ProjectRegistry registry;
@@ -81,7 +85,7 @@ public class AgentMcpTools {
         int topK = (k == null || k <= 0) ? 5 : k;
         List<String> ids = parseIds(projectIds);
         try {
-            Map<String, Object> result = ragService.askQuestion(question, topK, ids);
+            Map<String, Object> result = ragService.askQuestion(question, topK, ids, MCP_IDENTITY);
             return (String) result.get("answer");
         } catch (Exception e) {
             log.error("[MCP] ask_question failed", e);
@@ -115,7 +119,7 @@ public class AgentMcpTools {
         int topK = (k == null || k <= 0) ? 25 : k;
         List<String> ids = parseIds(projectIds);
         try {
-            Map<String, Object> result = ragService.generateDocument(name, topK, ids);
+            Map<String, Object> result = ragService.generateDocument(name, topK, ids, MCP_IDENTITY);
             return (String) result.get("document");
         } catch (Exception e) {
             log.error("[MCP] generate_document failed", e);
