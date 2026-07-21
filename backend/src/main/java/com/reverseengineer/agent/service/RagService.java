@@ -126,19 +126,20 @@ public class RagService {
         }
     }
 
-    public Map<String, Object> askQuestion(String question, int k, List<String> projectIds) {
+    public Map<String, Object> askQuestion(String question, int k, List<String> projectIds,
+                                            String identity) {
         requireIngested();
         requireKnownProjects(projectIds);
         SearchRequest request = buildSearchRequest(question, k, projectIds);
         List<Document> results = vectorStore.similaritySearch(request);
         List<String> formatted = results.stream().map(this::formatChunk).toList();
         String context = String.join("\n\n", formatted);
-        String answer  = llm.askLlm(question, context);
+        String answer  = llm.askLlm(question, context, identity);
         return Map.of("answer", answer, "sources", formatted);
     }
 
     public Map<String, Object> generateDocument(String projectName, int k,
-                                                 List<String> projectIds) {
+                                                 List<String> projectIds, String identity) {
         requireIngested();
         requireKnownProjects(projectIds);
 
@@ -178,7 +179,7 @@ public class RagService {
         String context = treeSection + "\n\n## Retrieved Code Evidence\n"
                 + String.join("\n\n", formatted);
 
-        Map<String, Object> chainResult = llm.runReverseEngineeringChain(context, projectName);
+        Map<String, Object> chainResult = llm.runReverseEngineeringChain(context, projectName, identity);
 
         return Map.of(
                 "document",    chainResult.get("document"),
