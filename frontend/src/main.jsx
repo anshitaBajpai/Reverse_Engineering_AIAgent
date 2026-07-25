@@ -91,13 +91,15 @@ function App() {
 
   async function handleIngest(event) {
     event.preventDefault();
+    const trimmedRepoUrl = repoUrl.trim();
+    setRepoUrl(trimmedRepoUrl);
     setError("");
     setActiveAction("ingest");
     setIngestResult(null);
     try {
       const result = await requestJson("/ingest", {
         method: "POST",
-        body: JSON.stringify({ repo_url: repoUrl.trim() }),
+        body: JSON.stringify({ repo_url: trimmedRepoUrl }),
       });
       setIngestResult(result);
       await refreshProjects();
@@ -110,6 +112,8 @@ function App() {
 
   async function handleQuery(event) {
     event.preventDefault();
+    const trimmedQuestion = question.trim();
+    setQuestion(trimmedQuestion);
     setError("");
     setActiveAction("query");
     setAnswer("");
@@ -121,7 +125,7 @@ function App() {
       const result = await requestJson("/query", {
         method: "POST",
         body: JSON.stringify({
-          question: question.trim(),
+          question: trimmedQuestion,
           k: Number(queryK),
           project_ids: selectedIds,
         }),
@@ -137,6 +141,8 @@ function App() {
 
   async function handleDocument(event) {
     event.preventDefault();
+    const trimmedProjectName = projectName.trim();
+    setProjectName(trimmedProjectName);
     setError("");
     setActiveAction("document");
     setAnswer("");
@@ -148,7 +154,7 @@ function App() {
       const result = await requestJson("/document", {
         method: "POST",
         body: JSON.stringify({
-          project_name: projectName.trim(),
+          project_name: trimmedProjectName,
           k: Number(documentK),
           project_ids: selectedIds,
         }),
