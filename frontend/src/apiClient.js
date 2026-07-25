@@ -3,6 +3,34 @@ export const API_BASE_URL =
 
 export const REQUEST_TIMEOUT_MS = 300000;
 
+function normalizeJsonValue(value) {
+  if (typeof value === "string") return value.trim();
+  if (Array.isArray(value)) return value.map(normalizeJsonValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, nestedValue]) => [
+        key,
+        normalizeJsonValue(nestedValue),
+      ]),
+    );
+  }
+  return value;
+}
+
+function prepareJsonBody(body) {
+  if (typeof body === "string") {
+    try {
+      return JSON.stringify(normalizeJsonValue(JSON.parse(body)));
+    } catch {
+      return body;
+    }
+  }
+  if (body && typeof body === "object") {
+    return JSON.stringify(normalizeJsonValue(body));
+  }
+  return body;
+}
+
 export async function requestJson(path, options = {}) {
   const {
     timeoutMs = REQUEST_TIMEOUT_MS,
@@ -12,6 +40,7 @@ export async function requestJson(path, options = {}) {
     baseUrl = API_BASE_URL,
     ...fetchOptions
   } = options;
+  const normalizedBody = prepareJsonBody(fetchOptions.body);
   const controller = new AbortController();
   const abortRequest = () => controller.abort();
   if (signal?.aborted) controller.abort();
@@ -25,6 +54,7 @@ export async function requestJson(path, options = {}) {
         ...headers,
       },
       ...fetchOptions,
+      body: normalizedBody,
       signal: controller.signal,
     });
   } catch (err) {
