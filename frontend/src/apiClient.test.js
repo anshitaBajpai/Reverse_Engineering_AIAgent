@@ -42,6 +42,18 @@ test("requestJson returns parsed success body", async () => {
   assert.deepEqual(data, { status: "ok" });
 });
 
+test("requestJson trims string values in JSON bodies before sending", async () => {
+  await requestJson("/query", {
+    baseUrl: "http://test",
+    fetchImpl: async (url, options) => {
+      assert.equal(url, "http://test/query");
+      assert.equal(options.body, '{"question":"what is this?","k":5}');
+      return new Response('{"answer":"ok"}', { status: 200 });
+    },
+    body: JSON.stringify({ question: "  what is this?  ", k: 5 }),
+  });
+});
+
 test("requestJson throws parsed API errors", async () => {
   await assert.rejects(
     requestJson("/ingest", {
