@@ -260,6 +260,7 @@ public class RagService {
             }
         }
     }
+    
 
     private void clearProject(String projectId) {
         try {
