@@ -253,14 +253,25 @@ textarea:focus {
 }
 
 .project-item {
-  grid-template-columns: auto 1fr;
+  display: flex;
   align-items: start;
+  justify-content: space-between;
   gap: 10px;
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 10px;
   background: #0d1424;
   color: var(--text);
+}
+
+.project-item label {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: start;
+  gap: 10px;
+  min-width: 0;
+  color: var(--text);
+  font-weight: 400;
 }
 
 .project-item input {
@@ -278,6 +289,21 @@ textarea:focus {
 .project-item small {
   color: var(--muted);
   line-height: 1.4;
+}
+
+.project-item .danger {
+  flex: 0 0 auto;
+  min-height: 32px;
+  padding: 0 10px;
+  font-size: 0.78rem;
+  color: #fecaca;
+  border-color: rgba(239, 68, 68, 0.35);
+  background: rgba(239, 68, 68, 0.08);
+}
+
+.project-item .danger:hover {
+  border-color: var(--error);
+  background: rgba(239, 68, 68, 0.16);
 }
 
 .actions-grid {
