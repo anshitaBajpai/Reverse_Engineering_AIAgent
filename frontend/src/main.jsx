@@ -57,6 +57,7 @@ function App() {
   const [documentSources, setDocumentSources] = useState([]);
   const [activeAction, setActiveAction] = useState("");
   const [error, setError] = useState("");
+  const [deletingId, setDeletingId] = useState("");
 
   const hasData = projects.length > 0 || !!ingestResult;
 
@@ -169,6 +170,26 @@ function App() {
     }
   }
 
+  async function handleDeleteProject(projectId, repoUrl) {
+    const label = repoNameFromUrl(repoUrl);
+    if (!window.confirm(`Remove project "${label}"? This deletes its ingested data.`)) {
+      return;
+    }
+    setError("");
+    setDeletingId(projectId);
+    try {
+      await requestJson(`/projects/${encodeURIComponent(projectId)}`, {
+        method: "DELETE",
+      });
+      setSelectedIds((current) => current.filter((id) => id !== projectId));
+      await refreshProjects();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setDeletingId("");
+    }
+  }
+
   function toggleProject(id) {
     setSelectedIds((current) =>
       current.includes(id)
@@ -278,21 +299,33 @@ function App() {
                 </div>
                 <div className="project-list">
                   {projects.map((project) => (
-                    <label className="project-item" key={project.project_id}>
-                      <input
-                        type="checkbox"
-                        checked={selectedIds.includes(project.project_id)}
-                        onChange={() => toggleProject(project.project_id)}
-                      />
-                      <span>
-                        <strong>{repoNameFromUrl(project.repo_url)}</strong>
-                        <small>
-                          {project.files_loaded} files ·{" "}
-                          {project.chunks_created} chunks ·{" "}
-                          {shortSha(project.last_commit_sha)}
-                        </small>
-                      </span>
-                    </label>
+                    <div className="project-item" key={project.project_id}>
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.includes(project.project_id)}
+                          onChange={() => toggleProject(project.project_id)}
+                        />
+                        <span>
+                          <strong>{repoNameFromUrl(project.repo_url)}</strong>
+                          <small>
+                            {project.files_loaded} files ·{" "}
+                            {project.chunks_created} chunks ·{" "}
+                            {shortSha(project.last_commit_sha)}
+                          </small>
+                        </span>
+                      </label>
+                      <button
+                        type="button"
+                        className="danger"
+                        disabled={deletingId === project.project_id}
+                        onClick={() =>
+                          handleDeleteProject(project.project_id, project.repo_url)
+                        }
+                      >
+                        {deletingId === project.project_id ? "Removing..." : "Remove"}
+                      </button>
+                    </div>
                   ))}
                 </div>
               </>
