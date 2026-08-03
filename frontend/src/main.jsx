@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { requestJson } from "./apiClient";
+import { ingestRepositoryAsync, requestJson } from "./apiClient";
 import "./styles.css";
 
 function normalizeProject(project) {
@@ -50,6 +50,7 @@ function App() {
   const [queryK, setQueryK] = useState(5);
   const [documentK, setDocumentK] = useState(25);
   const [ingestResult, setIngestResult] = useState(null);
+  const [ingestJob, setIngestJob] = useState(null);
   const [answer, setAnswer] = useState("");
   const [documentText, setDocumentText] = useState("");
   const [chainSteps, setChainSteps] = useState([]);
@@ -97,10 +98,10 @@ function App() {
     setError("");
     setActiveAction("ingest");
     setIngestResult(null);
+    setIngestJob(null);
     try {
-      const result = await requestJson("/ingest", {
-        method: "POST",
-        body: JSON.stringify({ repo_url: trimmedRepoUrl }),
+      const result = await ingestRepositoryAsync(trimmedRepoUrl, {
+        onJobUpdate: setIngestJob,
       });
       setIngestResult(result);
       await refreshProjects();
@@ -255,6 +256,11 @@ function App() {
               <p className="muted">
                 Backend is offline. Start the Spring Boot server on port 8080
                 before ingesting a repository.
+              </p>
+            )}
+            {ingestJob && (
+              <p className={`job-status ${ingestJob.status.toLowerCase()}`}>
+                Job {ingestJob.status.toLowerCase()}
               </p>
             )}
             {ingestResult && (
