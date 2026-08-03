@@ -2,6 +2,8 @@ export const API_BASE_URL =
   import.meta.env?.VITE_API_BASE_URL || "http://127.0.0.1:8080";
 
 export const REQUEST_TIMEOUT_MS = 300000;
+export const INGEST_POLL_INTERVAL_MS = 2000;
+export const INGEST_JOB_TIMEOUT_MS = REQUEST_TIMEOUT_MS;
 
 function normalizeJsonValue(value) {
   if (typeof value === "string") return value.trim();
@@ -81,6 +83,42 @@ export async function requestJson(path, options = {}) {
     throw new Error(getErrorMessage(data, text, response.status));
   }
   return data;
+}
+
+export async function ingestRepositoryAsync(repoUrl, options = {}) {
+  const {
+    pollIntervalMs = INGEST_POLL_INTERVAL_MS,
+    timeoutMs = INGEST_JOB_TIMEOUT_MS,
+    onJobUpdate,
+    sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    ...requestOptions
+  } = options;
+
+  const job = await requestJson("/ingest/async", {
+    ...requestOptions,
+    method: "POST",
+    body: JSON.stringify({ repo_url: repoUrl }),
+  });
+  onJobUpdate?.(job);
+
+  const startedAt = Date.now();
+  let currentJob = job;
+  while (currentJob?.status === "PENDING" || currentJob?.status === "RUNNING") {
+    if (Date.now() - startedAt >= timeoutMs) {
+      throw new Error("Repository ingestion is still running. Check the job status and try again.");
+    }
+    await sleep(pollIntervalMs);
+    currentJob = await requestJson(`/jobs/${encodeURIComponent(currentJob.jobId)}`, requestOptions);
+    onJobUpdate?.(currentJob);
+  }
+
+  if (currentJob?.status === "SUCCEEDED") {
+    return currentJob.result;
+  }
+  if (currentJob?.status === "FAILED") {
+    throw new Error(currentJob.error || "Repository ingestion failed.");
+  }
+  throw new Error(`Repository ingestion ended with status ${currentJob?.status || "unknown"}.`);
 }
 
 export function parseResponseBody(text) {
