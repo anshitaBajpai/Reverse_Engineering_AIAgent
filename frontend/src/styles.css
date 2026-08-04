@@ -222,6 +222,30 @@ textarea:focus {
   line-height: 1.5;
 }
 
+.job-status {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 9px 11px;
+  background: #0d1424;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+}
+
+.job-status.running,
+.job-status.pending {
+  color: #a5b4fc;
+}
+
+.job-status.succeeded {
+  color: var(--success);
+}
+
+.job-status.failed {
+  color: var(--error);
+}
+
 .result {
   display: flex;
   flex-wrap: wrap;
