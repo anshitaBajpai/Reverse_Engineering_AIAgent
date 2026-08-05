@@ -59,6 +59,8 @@ function App() {
   const [activeAction, setActiveAction] = useState("");
   const [error, setError] = useState("");
   const [deletingId, setDeletingId] = useState("");
+  const [projectStatuses, setProjectStatuses] = useState({});
+  const [projectActions, setProjectActions] = useState({});
 
   const hasData = projects.length > 0 || !!ingestResult;
 
@@ -173,7 +175,11 @@ function App() {
 
   async function handleDeleteProject(projectId, repoUrl) {
     const label = repoNameFromUrl(repoUrl);
-    if (!window.confirm(`Remove project "${label}"? This deletes its ingested data.`)) {
+    if (
+      !window.confirm(
+        `Remove project "${label}"? This deletes its ingested data.`,
+      )
+    ) {
       return;
     }
     setError("");
@@ -183,11 +189,48 @@ function App() {
         method: "DELETE",
       });
       setSelectedIds((current) => current.filter((id) => id !== projectId));
+      setProjectStatuses((current) => {
+        const next = { ...current };
+        delete next[projectId];
+        return next;
+      });
       await refreshProjects();
     } catch (err) {
       setError(err.message);
     } finally {
       setDeletingId("");
+    }
+  }
+
+  async function handleCheckProjectStatus(projectId) {
+    setError("");
+    setProjectActions((current) => ({ ...current, [projectId]: "checking" }));
+    try {
+      const status = await requestJson(
+        `/projects/${encodeURIComponent(projectId)}/status`,
+      );
+      setProjectStatuses((current) => ({ ...current, [projectId]: status }));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setProjectActions((current) => ({ ...current, [projectId]: "" }));
+    }
+  }
+
+  async function handleRefreshProject(projectId) {
+    setError("");
+    setProjectActions((current) => ({ ...current, [projectId]: "refreshing" }));
+    try {
+      const result = await requestJson(
+        `/projects/${encodeURIComponent(projectId)}/refresh`,
+        { method: "POST" },
+      );
+      await refreshProjects();
+      await handleCheckProjectStatus(result.project_id || projectId);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setProjectActions((current) => ({ ...current, [projectId]: "" }));
     }
   }
 
@@ -215,11 +258,11 @@ function App() {
     <main className="app-shell">
       <header className="topbar">
         <div>
-          <p className="eyebrow">AI codebase analysis</p>
-          <h1>Reverse Engineering AI Agent</h1>
+          <p className="eyebrow">Codebase analysis</p>
+          <h1>Reverse engineer a repo</h1>
           <p className="subtitle">
-            Ingest a repository, ask questions, and generate a
-            reverse-engineering document.
+            Load a GitHub repository, ask focused questions, or generate a
+            concise Markdown report.
           </p>
         </div>
         <span className={`status ${health}`}>{statusLabel}</span>
@@ -234,7 +277,7 @@ function App() {
       <section className="layout">
         <aside className="sidebar">
           <form className="card" onSubmit={handleIngest}>
-            <CardHeader title="Repository" meta="Step 1" />
+            <CardHeader title="Repository" meta="Load" />
             <label>
               GitHub repository URL
               <input
@@ -252,12 +295,7 @@ function App() {
             >
               {activeAction === "ingest" ? "Ingesting..." : "Ingest repository"}
             </button>
-            {backendOffline && (
-              <p className="muted">
-                Backend is offline. Start the Spring Boot server on port 8080
-                before ingesting a repository.
-              </p>
-            )}
+            {backendOffline && <p className="muted">Backend is offline.</p>}
             {ingestJob && (
               <p className={`job-status ${ingestJob.status.toLowerCase()}`}>
                 Job {ingestJob.status.toLowerCase()}
@@ -280,7 +318,7 @@ function App() {
           </form>
 
           <section className="card">
-            <CardHeader title="Project scope" meta={scopeLabel} />
+            <CardHeader title="Scope" meta={scopeLabel} />
             {!projects.length && (
               <p className="muted">
                 Ingest a repository to create a project scope.
@@ -305,7 +343,14 @@ function App() {
                 </div>
                 <div className="project-list">
                   {projects.map((project) => (
-                    <div className="project-item" key={project.project_id}>
+                    <div
+                      className={`project-item ${
+                        hasProjectUpdates(projectStatuses[project.project_id])
+                          ? "stale"
+                          : ""
+                      }`}
+                      key={project.project_id}
+                    >
                       <label>
                         <input
                           type="checkbox"
@@ -315,22 +360,68 @@ function App() {
                         <span>
                           <strong>{repoNameFromUrl(project.repo_url)}</strong>
                           <small>
-                            {project.files_loaded} files ·{" "}
-                            {project.chunks_created} chunks ·{" "}
+                            {project.files_loaded} files /{" "}
+                            {project.chunks_created} chunks /{" "}
                             {shortSha(project.last_commit_sha)}
                           </small>
                         </span>
                       </label>
-                      <button
-                        type="button"
-                        className="danger"
-                        disabled={deletingId === project.project_id}
-                        onClick={() =>
-                          handleDeleteProject(project.project_id, project.repo_url)
-                        }
-                      >
-                        {deletingId === project.project_id ? "Removing..." : "Remove"}
-                      </button>
+                      <ProjectStatus
+                        status={projectStatuses[project.project_id]}
+                      />
+                      <div className="project-actions">
+                        <button
+                          type="button"
+                          disabled={
+                            !!projectActions[project.project_id] ||
+                            deletingId === project.project_id
+                          }
+                          onClick={() =>
+                            handleCheckProjectStatus(project.project_id)
+                          }
+                        >
+                          {projectActions[project.project_id] === "checking"
+                            ? "Checking..."
+                            : "Check"}
+                        </button>
+                        {hasProjectUpdates(
+                          projectStatuses[project.project_id],
+                        ) && (
+                          <button
+                            type="button"
+                            className="primary"
+                            disabled={
+                              !!projectActions[project.project_id] ||
+                              deletingId === project.project_id
+                            }
+                            onClick={() =>
+                              handleRefreshProject(project.project_id)
+                            }
+                          >
+                            {projectActions[project.project_id] === "refreshing"
+                              ? "Refreshing..."
+                              : "Refresh"}
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          className="danger"
+                          disabled={
+                            deletingId === project.project_id ||
+                            projectActions[project.project_id] === "refreshing"
+                          }
+                          onClick={() =>
+                            handleDeleteProject(
+                              project.project_id,
+                              project.repo_url,
+                            )
+                          }
+                        >
+                          {deletingId === project.project_id
+                            ? "Removing..."
+                            : "Remove"}
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -342,7 +433,7 @@ function App() {
         <section className="main-panel">
           <div className="actions-grid">
             <form className="card" onSubmit={handleQuery}>
-              <CardHeader title="Ask" meta="RAG answer" />
+              <CardHeader title="Ask" meta="Question" />
               <label>
                 Question
                 <textarea
@@ -377,7 +468,7 @@ function App() {
             </form>
 
             <form className="card" onSubmit={handleDocument}>
-              <CardHeader title="Document" meta="Markdown report" />
+              <CardHeader title="Report" meta="Markdown" />
               <label>
                 Project name
                 <input
@@ -427,10 +518,9 @@ function App() {
 
             {!activeAction && !answer && !documentText && (
               <div className="empty">
-                <strong>Ready for analysis</strong>
+                <strong>No output yet</strong>
                 <span>
-                  Connect a repository, then ask a question or generate
-                  documentation.
+                  Load a repository, then ask a question or generate a report.
                 </span>
               </div>
             )}
@@ -457,6 +547,28 @@ function App() {
   );
 }
 
+function hasProjectUpdates(status) {
+  const github = status?.github;
+  return !!(github?.has_new_commits || github?.hasNewCommits);
+}
+
+function ProjectStatus({ status }) {
+  if (!status) return null;
+
+  const github = status.github;
+  const latestSha = github?.latest_commit_sha || github?.latestCommitSha;
+  const needsRefresh = hasProjectUpdates(status);
+
+  return (
+    <div className="project-status">
+      <span className={needsRefresh ? "update-needed" : "up-to-date"}>
+        {needsRefresh ? "Update available" : "Up to date"}
+      </span>
+      {latestSha && <small>GitHub {shortSha(latestSha)}</small>}
+    </div>
+  );
+}
+
 function CardHeader({ title, meta }) {
   return (
     <div className="card-header">
@@ -475,7 +587,7 @@ function Loader({ action }) {
           key={line}
           className={index === 1 ? "active" : index < 1 ? "done" : ""}
         >
-          <span>{index < 1 ? "✓" : index === 1 ? "›" : "·"}</span>
+          <span>{index < 1 ? "done" : index === 1 ? "now" : "-"}</span>
           {line}
         </div>
       ))}
