@@ -61,6 +61,7 @@ function App() {
   const [deletingId, setDeletingId] = useState("");
   const [projectStatuses, setProjectStatuses] = useState({});
   const [projectActions, setProjectActions] = useState({});
+  const [activeOutputTab, setActiveOutputTab] = useState("answer");
 
   const hasData = projects.length > 0 || !!ingestResult;
 
@@ -87,6 +88,18 @@ function App() {
     const valid = new Set(projects.map((project) => project.project_id));
     setSelectedIds((current) => current.filter((id) => valid.has(id)));
   }, [projects]);
+
+  useEffect(() => {
+    if (answer) {
+      setActiveOutputTab("answer");
+      return;
+    }
+    if (documentText) {
+      setActiveOutputTab("document");
+      return;
+    }
+    setActiveOutputTab("answer");
+  }, [answer, documentText]);
 
   async function refreshProjects() {
     const list = await requestJson("/projects").catch(() => []);
@@ -253,6 +266,17 @@ function App() {
   }
 
   const backendOffline = health === "error";
+  const outputTabs = getOutputTabs({
+    answer,
+    documentText,
+    querySources,
+    documentSources,
+    chainSteps,
+  });
+  const visibleOutputTab =
+    outputTabs.some((tab) => tab.id === activeOutputTab)
+      ? activeOutputTab
+      : outputTabs[0]?.id || "answer";
 
   return (
     <main className="app-shell">
@@ -525,26 +549,66 @@ function App() {
               </div>
             )}
 
-            {answer && <MarkdownOutput label="Answer" text={answer} />}
-            {answer && querySources.length > 0 && (
-              <SourceDetails label="Answer sources" sources={querySources} />
-            )}
+            {!activeAction && outputTabs.length > 0 && (
+              <>
+                <div className="output-tabs" role="tablist" aria-label="Output">
+                  {outputTabs.map((tab) => (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      role="tab"
+                      aria-selected={visibleOutputTab === tab.id}
+                      className={visibleOutputTab === tab.id ? "active" : ""}
+                      onClick={() => setActiveOutputTab(tab.id)}
+                    >
+                      {tab.label}
+                      {tab.count > 0 && <span>{tab.count}</span>}
+                    </button>
+                  ))}
+                </div>
 
-            {documentText && (
-              <MarkdownOutput label="Document" text={documentText} />
-            )}
-            {chainSteps.length > 0 && <ChainSteps steps={chainSteps} />}
-            {documentText && documentSources.length > 0 && (
-              <SourceDetails
-                label="Document sources"
-                sources={documentSources}
-              />
+                {visibleOutputTab === "answer" && (
+                  <MarkdownOutput label="Answer" text={answer} />
+                )}
+                {visibleOutputTab === "document" && (
+                  <MarkdownOutput label="Document" text={documentText} />
+                )}
+                {visibleOutputTab === "sources" && (
+                  <SourcesPanel
+                    querySources={querySources}
+                    documentSources={documentSources}
+                  />
+                )}
+                {visibleOutputTab === "chain" && (
+                  <ChainStepsPanel steps={chainSteps} />
+                )}
+              </>
             )}
           </section>
         </section>
       </section>
     </main>
   );
+}
+
+function getOutputTabs({
+  answer,
+  documentText,
+  querySources,
+  documentSources,
+  chainSteps,
+}) {
+  const tabs = [];
+  const sourceCount = querySources.length + documentSources.length;
+  if (answer) tabs.push({ id: "answer", label: "Answer", count: 0 });
+  if (documentText) tabs.push({ id: "document", label: "Report", count: 0 });
+  if (sourceCount > 0) {
+    tabs.push({ id: "sources", label: "Sources", count: sourceCount });
+  }
+  if (chainSteps.length > 0) {
+    tabs.push({ id: "chain", label: "Chain", count: chainSteps.length });
+  }
+  return tabs;
 }
 
 function hasProjectUpdates(status) {
@@ -604,10 +668,9 @@ function MarkdownOutput({ label, text }) {
   );
 }
 
-function ChainSteps({ steps }) {
+function ChainStepsPanel({ steps }) {
   return (
-    <details className="sources">
-      <summary>Prompt chain artifacts ({steps.length})</summary>
+    <section className="tab-panel">
       {steps.map((step) => (
         <article className="chain-step" key={step.name}>
           <h3>{step.name.replaceAll("_", " ")}</h3>
@@ -615,20 +678,33 @@ function ChainSteps({ steps }) {
           <pre>{step.content}</pre>
         </article>
       ))}
-    </details>
+    </section>
   );
 }
 
-function SourceDetails({ label, sources }) {
+function SourcesPanel({ querySources, documentSources }) {
   return (
-    <details className="sources">
-      <summary>
-        {label} ({sources.length})
-      </summary>
+    <section className="tab-panel sources-panel">
+      {querySources.length > 0 && (
+        <SourceGroup label="Answer sources" sources={querySources} />
+      )}
+      {documentSources.length > 0 && (
+        <SourceGroup label="Report sources" sources={documentSources} />
+      )}
+    </section>
+  );
+}
+
+function SourceGroup({ label, sources }) {
+  return (
+    <div className="source-group">
+      <h3>
+        {label} <span>{sources.length}</span>
+      </h3>
       {sources.map((source, index) => (
-        <pre key={`${source.slice(0, 30)}-${index}`}>{source}</pre>
+        <pre key={`${label}-${source.slice(0, 30)}-${index}`}>{source}</pre>
       ))}
-    </details>
+    </div>
   );
 }
 
