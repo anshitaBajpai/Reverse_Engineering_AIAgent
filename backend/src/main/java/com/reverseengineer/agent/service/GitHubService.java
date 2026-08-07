@@ -9,6 +9,7 @@ import org.springframework.web.client.RestClient;
 
 import java.net.URI;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -16,12 +17,13 @@ import java.util.concurrent.ConcurrentHashMap;
 public class GitHubService {
 
     private static final Logger log = LoggerFactory.getLogger(GitHubService.class);
-    private static final long STATUS_CACHE_TTL_MS = 60_000L;
 
     private final RestClient restClient;
     private final ConcurrentHashMap<String, CachedStatus> statusCache = new ConcurrentHashMap<>();
+    private final long statusCacheTtlMs;
 
     public GitHubService(AppProperties props) {
+        this.statusCacheTtlMs = props.githubStatusTtlMs();
         var builder = RestClient.builder()
                 .baseUrl("https://api.github.com")
                 .defaultHeader("Accept", "application/vnd.github+json")
@@ -54,7 +56,8 @@ public class GitHubService {
     private record CachedStatus(RepoStatus status, long expiresAtMillis) {}
 
     public RepoStatus getStatus(String repoUrl) {
-        CachedStatus cached = statusCache.get(repoUrl);
+        String cacheKey = normalizeRepoKey(repoUrl);
+        CachedStatus cached = statusCache.get(cacheKey);
         long now = System.currentTimeMillis();
         if (cached != null && cached.expiresAtMillis() > now) {
             return cached.status();
@@ -95,7 +98,7 @@ public class GitHubService {
             int branchCount = branches != null ? branches.size() : 0;
 
             RepoStatus status = new RepoStatus(defaultBranch, latestSha, prCount, branchCount, pushedAt);
-            statusCache.put(repoUrl, new CachedStatus(status, now + STATUS_CACHE_TTL_MS));
+            statusCache.put(cacheKey, new CachedStatus(status, now + statusCacheTtlMs));
             return status;
 
         } catch (Exception e) {
@@ -113,5 +116,18 @@ public class GitHubService {
         }
         String repoName = parts[1].replaceAll("\\.git$", "");
         return new String[]{parts[0], repoName};
+    }
+
+    private static String normalizeRepoKey(String repoUrl) {
+        String[] coords = parseCoords(repoUrl);
+        return coords[0].toLowerCase(Locale.ROOT) + "/" + coords[1].toLowerCase(Locale.ROOT);
+    }
+
+    public void invalidateStatus(String repoUrl) {
+        try {
+            statusCache.remove(normalizeRepoKey(repoUrl));
+        } catch (Exception e) {
+            log.debug("Failed to invalidate GitHub cache for {}: {}", repoUrl, e.getMessage());
+        }
     }
 }
