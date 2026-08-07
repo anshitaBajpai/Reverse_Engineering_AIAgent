@@ -18,9 +18,14 @@ public record AppProperties(
         int maxQuestionLength,
         int maxProjectNameLength,
         String githubToken,
+        Long githubStatusTtlMs,
         Llm llm,
         Usage usage
 ) {
+    public Long githubStatusTtlMs() {
+        return githubStatusTtlMs != null ? githubStatusTtlMs : 60_000L;
+    }
+
     public record Llm(
             double queryTemperature,
             double chainTemperature,
