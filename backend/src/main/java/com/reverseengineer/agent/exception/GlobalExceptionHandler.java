@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import jakarta.validation.ConstraintViolationException;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -154,6 +155,16 @@ public class GlobalExceptionHandler {
                         "Validation failed",
                         request.getRequestURI(),
                         details));
+    }
+
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<ApiErrorResponse> handleNotFound(
+            NoResourceFoundException ex,
+            HttpServletRequest request) {
+
+        log.debug("No handler for {} {}", request.getMethod(), request.getRequestURI());
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(error(HttpStatus.NOT_FOUND, "No endpoint for this request.", request));
     }
 
     @ExceptionHandler(DataIntegrityViolationException.class)
