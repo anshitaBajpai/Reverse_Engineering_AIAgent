@@ -91,8 +91,10 @@ public class AgentController {
         AsyncJobInfo job = asyncJobs.submit("ingest", () -> {
             try {
                 return ragService.ingestRepo(repoUrl);
-            } catch (Exception e) {
+            } catch (IllegalArgumentException | IllegalStateException e) {
                 throw new RuntimeException(e.getMessage(), e);
+            } catch (Exception e) {
+                throw new RuntimeException("Repository ingestion failed.", e);
             }
         });
         return ResponseEntity.accepted()
@@ -261,6 +263,7 @@ public class AgentController {
 
         try {
             Map<String, Object> result = ragService.ingestRepo(info.repoUrl());
+            gitHub.invalidateStatus(info.repoUrl());
             return ResponseEntity.ok(Map.of(
                     "refreshed",      true,
                     "message",        "Re-ingested successfully.",
