@@ -90,6 +90,18 @@ public class ProjectRegistry {
         return Optional.ofNullable(registry.get(projectId));
     }
 
+    public List<ProjectInfo> findByIds(List<String> projectIds) {
+        if (projectIds == null || projectIds.isEmpty()) {
+            return findAll();
+        }
+        return projectIds.stream()
+                .filter(Objects::nonNull)
+                .distinct()
+                .map(registry::get)
+                .filter(Objects::nonNull)
+                .toList();
+    }
+
     public List<ProjectInfo> findAll() {
         return List.copyOf(registry.values());
     }
