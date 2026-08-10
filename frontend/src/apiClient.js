@@ -108,7 +108,7 @@ export async function ingestRepositoryAsync(repoUrl, options = {}) {
       throw new Error("Repository ingestion is still running. Check the job status and try again.");
     }
     await sleep(pollIntervalMs);
-    currentJob = await requestJson(`/jobs/${encodeURIComponent(currentJob.jobId)}`, requestOptions);
+    currentJob = await requestJson(`/jobs/${encodeURIComponent(currentJob.job_id)}`, requestOptions);
     onJobUpdate?.(currentJob);
   }
 
