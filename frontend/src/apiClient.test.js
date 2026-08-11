@@ -80,12 +80,12 @@ test("ingestRepositoryAsync polls until the job succeeds", async () => {
     fetchImpl: async (url, options) => {
       calls.push({ url, body: options.body });
       if (url.endsWith("/ingest/async")) {
-        return new Response('{"jobId":"job-1","status":"PENDING"}', {
+        return new Response('{"job_id":"job-1","status":"PENDING"}', {
           status: 202,
         });
       }
       return new Response(
-        '{"jobId":"job-1","status":"SUCCEEDED","result":{"files_loaded":3,"chunks_created":8}}',
+        '{"job_id":"job-1","status":"SUCCEEDED","result":{"files_loaded":3,"chunks_created":8}}',
         { status: 200 },
       );
     },
@@ -106,12 +106,12 @@ test("ingestRepositoryAsync throws failed job errors", async () => {
       sleep: async () => {},
       fetchImpl: async (url) => {
         if (url.endsWith("/ingest/async")) {
-          return new Response('{"jobId":"job-1","status":"RUNNING"}', {
+          return new Response('{"job_id":"job-1","status":"RUNNING"}', {
             status: 202,
           });
         }
         return new Response(
-          '{"jobId":"job-1","status":"FAILED","error":"Clone failed"}',
+          '{"job_id":"job-1","status":"FAILED","error":"Clone failed"}',
           { status: 200 },
         );
       },
@@ -128,7 +128,7 @@ test("ingestRepositoryAsync times out while job is still active", async () => {
       timeoutMs: 0,
       sleep: async () => {},
       fetchImpl: async () =>
-        new Response('{"jobId":"job-1","status":"RUNNING"}', {
+        new Response('{"job_id":"job-1","status":"RUNNING"}', {
           status: 202,
         }),
     }),
