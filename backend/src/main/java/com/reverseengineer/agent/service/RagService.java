@@ -33,6 +33,7 @@ public class RagService {
     private final ProjectRegistry registry;
 
     private final ReentrantLock ingestLock = new ReentrantLock();
+    private static final int MIN_DOCUMENT_RETRIEVAL_K = 12;
 
     public RagService(VectorStore vectorStore,
                       JdbcTemplate jdbcTemplate,
@@ -129,9 +130,11 @@ public class RagService {
     public Map<String, Object> askQuestion(String question, int k, List<String> projectIds,
                                             String identity) {
         requireIngested();
-        requireKnownProjects(projectIds);
-        SearchRequest request = buildSearchRequest(question, k, projectIds);
-        List<Document> results = vectorStore.similaritySearch(request);
+        List<String> normalizedProjectIds = normalizeProjectIds(projectIds);
+        requireKnownProjects(normalizedProjectIds);
+        int effectiveK = Math.min(Math.max(k, 1), props.maxQueryK());
+        SearchRequest request = buildSearchRequest(question, effectiveK, normalizedProjectIds);
+        List<Document> results = deduplicateDocuments(vectorStore.similaritySearch(request));
         List<String> formatted = results.stream().map(this::formatChunk).toList();
         String context = String.join("\n\n", formatted);
         String answer  = llm.askLlm(question, context, identity);
@@ -141,33 +144,18 @@ public class RagService {
     public Map<String, Object> generateDocument(String projectName, int k,
                                                  List<String> projectIds, String identity) {
         requireIngested();
-        requireKnownProjects(projectIds);
+        List<String> normalizedProjectIds = normalizeProjectIds(projectIds);
+        requireKnownProjects(normalizedProjectIds);
+        int effectiveK = Math.min(Math.max(k, 1), props.maxDocumentK());
 
-        String[] retrievalQueries = {
-                "application entry points startup initialization routing controllers API endpoints",
-                "overall architecture modules services components layers package structure",
-                "data flow request flow business logic database persistence models schemas",
-                "configuration environment variables secrets settings deployment dependencies",
-                "authentication authorization security validation error handling external integrations",
-                "important classes functions interfaces utilities background jobs clients"
-        };
-
-        int perQueryK = Math.max(4, Math.min(k, 12));
-        List<Document> retrieved = new ArrayList<>();
-        for (String q : retrievalQueries) {
-            retrieved.addAll(vectorStore.similaritySearch(
-                    buildSearchRequest(q, perQueryK, projectIds)));
-        }
-
+        List<Document> retrieved = retrieveDocumentsForDocumentGeneration(normalizedProjectIds, effectiveK);
         List<Document> deduped = deduplicateDocuments(retrieved);
-        int cap = Math.min(k, Math.min(deduped.size(), props.maxDocumentK()));
+        int cap = Math.min(effectiveK, deduped.size());
         deduped = deduped.subList(0, cap);
 
-        List<ProjectInfo> scopedProjects = projectIds.isEmpty()
+        List<ProjectInfo> scopedProjects = normalizedProjectIds.isEmpty()
                 ? registry.findAll()
-                : registry.findAll().stream()
-                        .filter(p -> projectIds.contains(p.projectId()))
-                        .toList();
+                : registry.findByIds(normalizedProjectIds);
 
         StringBuilder treeSection = new StringBuilder("## Repository Trees\n");
         for (ProjectInfo project : scopedProjects) {
@@ -214,11 +202,39 @@ public class RagService {
         if (!projectIds.isEmpty()) {
             // project_id values are [a-z0-9-] only — safe to embed in filter expression
             String filter = projectIds.stream()
+                    .distinct()
                     .map(id -> "project_id == '" + id + "'")
                     .collect(Collectors.joining(" OR "));
             builder.filterExpression(filter);
         }
         return builder.build();
+    }
+
+    private List<String> normalizeProjectIds(List<String> projectIds) {
+        if (projectIds == null || projectIds.isEmpty()) {
+            return List.of();
+        }
+        return projectIds.stream()
+                .filter(Objects::nonNull)
+                .map(String::trim)
+                .filter(id -> !id.isEmpty())
+                .distinct()
+                .toList();
+    }
+
+    private List<Document> retrieveDocumentsForDocumentGeneration(
+            List<String> projectIds, int k) {
+        String retrievalQuery = String.join(" ",
+                "application entry points startup initialization routing controllers API endpoints",
+                "overall architecture modules services components layers package structure",
+                "data flow request flow business logic database persistence models schemas",
+                "configuration environment variables secrets settings deployment dependencies",
+                "authentication authorization security validation error handling external integrations",
+                "important classes functions interfaces utilities background jobs clients");
+
+        int searchK = Math.min(Math.max(k * 3, MIN_DOCUMENT_RETRIEVAL_K), props.maxDocumentK());
+        return vectorStore.similaritySearch(
+                buildSearchRequest(retrievalQuery, searchK, projectIds));
     }
 
     String formatChunk(Document doc) {
@@ -277,13 +293,16 @@ public class RagService {
 
     private static List<Document> deduplicateDocuments(List<Document> docs) {
         Set<String> seen = new LinkedHashSet<>();
-        List<Document> unique = new ArrayList<>();
+        List<Document> unique = new ArrayList<>(docs.size());
         for (Document doc : docs) {
             Map<String, Object> meta = doc.getMetadata();
-            String key = meta.getOrDefault("project_id", "") + ":"
-                    + meta.getOrDefault("file_path", "") + ":"
-                    + meta.getOrDefault("chunk_index", "");
-            if (seen.add(key)) unique.add(doc);
+            String key = Objects.toString(meta.get("project_id"), "") + ":"
+                    + Objects.toString(meta.get("file_path"), "") + ":"
+                    + Objects.toString(meta.get("chunk_index"), "") + ":"
+                    + Objects.hashCode(doc.getText());
+            if (seen.add(key)) {
+                unique.add(doc);
+            }
         }
         return unique;
     }
