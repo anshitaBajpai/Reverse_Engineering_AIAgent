@@ -44,7 +44,7 @@ Copy `.env.example` to `.env` and fill in your OpenAI key:
 
 ```bash
 cd backend
-./mvnw spring-boot:run
+mvn spring-boot:run
 ```
 
 The API will be at `http://localhost:8080`.
