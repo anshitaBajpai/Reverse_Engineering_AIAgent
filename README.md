@@ -1,6 +1,6 @@
 # Reverse Engineering AI Agent
 
-Point this tool at any GitHub repository and ask questions about how it works. It clones the repo, chunks the source files, stores everything as embeddings in a local Postgres database, and lets you query it in plain English — or have it write a full reverse-engineering document for you.
+Point this tool at any GitHub repository and ask questions about how it works. It clones the repo, chunks the source files, stores everything as embeddings in a local Postgres database, and lets you query it in plain English or have it write a full reverse-engineering document for you.
 
 ## What it does
 
