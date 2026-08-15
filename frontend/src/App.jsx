@@ -600,7 +600,7 @@ function App() {
     <div className="app-shell">
       <main className="workspace">
         <header className="topbar">
-          <div>
+          <div className="hero-copy">
             <span className="eyebrow">Reverse Engineering AI Agent</span>
             <h1>Understand any codebase.</h1>
             <p>
