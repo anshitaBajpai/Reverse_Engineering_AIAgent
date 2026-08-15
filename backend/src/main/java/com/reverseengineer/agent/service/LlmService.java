@@ -184,15 +184,18 @@ public class LlmService {
                 The document must read like a real consulting deliverable, not a generic \
                 summary. Use Markdown. Include tables where they help. Include Mermaid \
                 diagrams when the evidence supports them.
+                Keep the style consistent across sections: short section intro, then facts, \
+                then implications or gaps. Avoid decorative or uneven formatting.
 
                 Use the intermediate findings below as the primary source. Use the original \
                 source context only to verify citations and avoid unsupported claims.
 
                 Required structure:
-                # Reverse Engineering Document: %s
+                # Technical Document: %s
                 ## Document Control
-                Create a table with Document Purpose, Source Basis, Confidence Level, and \
-                Generated Output Type.
+                Present these as a single Markdown table with exactly these columns:
+                Document Purpose | Source Basis | Confidence Level | Generated Output Type
+                Use one row only, keep the full wording, and do not shorten or paraphrase the evidence.
                 ## 1. Executive Summary
                 ## 2. Scope And Methodology
                 ## 3. High-Level System Context
@@ -216,6 +219,9 @@ public class LlmService {
                 - Prefer precise statements over broad claims.
                 - Do not invent files, routes, databases, or services not present in context.
                 - If a section has limited evidence, write what is known and then mark gaps.
+                - Use tables only when they genuinely improve readability; otherwise prefer \
+                concise bullets or short paragraphs.
+                - Make headings, spacing, and list structure consistent throughout.
                 - Make it polished enough to share with an engineering lead.
 
                 --- ARCHITECTURE FINDINGS ---
