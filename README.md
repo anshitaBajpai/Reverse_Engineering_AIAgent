@@ -10,6 +10,10 @@ Point this tool at any GitHub repository and ask questions about how it works. I
 - **Check for updates** — compare the ingested commit SHA against the current HEAD on GitHub and re-ingest if needed
 - **MCP server** — the backend also exposes an SSE endpoint so Claude Desktop (or any MCP client) can call the same tools directly, no UI needed
 
+## Screenshots
+
+![alt text](image.png)
+
 ## Tech stack
 
 | Layer        | What                            |
