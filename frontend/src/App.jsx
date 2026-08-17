@@ -153,7 +153,9 @@ function normalizeDocumentControl(markdown, projectName = "this codebase") {
     ].join("\n");
   };
 
-  const sectionMatch = text.match(/## Document Control([\s\S]*?)(?=\n## |\n# |\s*$)/);
+  const sectionMatch = text.match(
+    /## Document Control([\s\S]*?)(?=\n## |\n# |\s*$)/,
+  );
   if (!sectionMatch) return text;
 
   const sectionBody = sectionMatch[1];
@@ -179,7 +181,10 @@ function normalizeDocumentControl(markdown, projectName = "this codebase") {
           .filter((line) => !line.startsWith("#"))
           .slice(0, 4);
 
-  return text.replace(/## Document Control[\s\S]*?(?=\n## |\n# |\s*$)/, replacement(valueLines));
+  return text.replace(
+    /## Document Control[\s\S]*?(?=\n## |\n# |\s*$)/,
+    replacement(valueLines),
+  );
 }
 
 function normalizeDocumentSections(markdown) {
@@ -210,7 +215,10 @@ function normalizeDocumentSections(markdown) {
   );
 
   sections.forEach((section) => {
-    const pattern = new RegExp(`(^##\\s+${section.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*$)`, "m");
+    const pattern = new RegExp(
+      `(^##\\s+${section.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*$)`,
+      "m",
+    );
     normalized = normalized.replace(pattern, "\n$1\n");
   });
 
@@ -230,7 +238,7 @@ function App() {
   const [notice, setNotice] = useState(null);
   const [busyAction, setBusyAction] = useState("");
   const [ingestStage, setIngestStage] = useState("");
-  const [resultTab, setResultTab] = useState("document");
+  const [resultTab, setResultTab] = useState("main");
 
   const isBackendOnline = backendStatus === "online";
   const selectedProject = projects.find(
@@ -333,7 +341,7 @@ function App() {
     setBusyAction("ask");
     setNotice(null);
     setDocument(null);
-    setResultTab("answer");
+    setResultTab("main");
     try {
       const result = await requestJson("/query", {
         method: "POST",
@@ -357,7 +365,7 @@ function App() {
     setBusyAction("document");
     setNotice(null);
     setAnswer(null);
-    setResultTab("document");
+    setResultTab("main");
     try {
       const result = await requestJson("/document", {
         method: "POST",
@@ -383,7 +391,10 @@ function App() {
       documentName || selectedProject?.repo_url || "this codebase",
     );
     if (!normalizedContent.trim()) {
-      showNotice("error", "Generate a technical document before downloading a PDF.");
+      showNotice(
+        "error",
+        "Generate a technical document before downloading a PDF.",
+      );
       return;
     }
 
@@ -428,15 +439,21 @@ function App() {
     parseMarkdownBlocks(normalizedContent).forEach((block) => {
       if (block.type === "heading") {
         const sizeByLevel = { 1: 15, 2: 13, 3: 12 };
-        writeWrapped(stripMarkdownMarkers(block.text), sizeByLevel[block.level] || 12, {
-          bold: true,
-          afterGap: 5,
-        });
+        writeWrapped(
+          stripMarkdownMarkers(block.text),
+          sizeByLevel[block.level] || 12,
+          {
+            bold: true,
+            afterGap: 5,
+          },
+        );
         return;
       }
 
       if (block.type === "paragraph") {
-        writeWrapped(stripMarkdownMarkers(block.text), 11, { afterGap: paragraphGap });
+        writeWrapped(stripMarkdownMarkers(block.text), 11, {
+          afterGap: paragraphGap,
+        });
         return;
       }
 
@@ -458,7 +475,9 @@ function App() {
         const firstColWidth = Math.min(160, usableWidth * 0.34);
         const remainingWidth = usableWidth - firstColWidth;
         const otherColWidth =
-          colCount > 1 ? remainingWidth / Math.max(1, colCount - 1) : remainingWidth;
+          colCount > 1
+            ? remainingWidth / Math.max(1, colCount - 1)
+            : remainingWidth;
         const columnWidths = Array.from({ length: colCount }, (_, index) =>
           index === 0 ? firstColWidth : otherColWidth,
         );
@@ -473,12 +492,16 @@ function App() {
               columnWidths[cellIndex] - padX * 2,
             ),
           );
-          const rowHeight = Math.max(
-            ...cellLines.map((lines) => lines.length),
-          ) * lineHeight + padY * 2;
+          const rowHeight =
+            Math.max(...cellLines.map((lines) => lines.length)) * lineHeight +
+            padY * 2;
           ensureSpace(rowHeight + 4);
 
-          doc.setFillColor(rowIndex === 0 ? 233 : 248, rowIndex === 0 ? 237 : 249, rowIndex === 0 ? 241 : 250);
+          doc.setFillColor(
+            rowIndex === 0 ? 233 : 248,
+            rowIndex === 0 ? 237 : 249,
+            rowIndex === 0 ? 241 : 250,
+          );
           doc.rect(startX, cursorY - 11, usableWidth, rowHeight, "F");
           doc.setDrawColor(210, 214, 219);
           doc.rect(startX, cursorY - 11, usableWidth, rowHeight);
@@ -492,7 +515,11 @@ function App() {
             doc.setFontSize(10);
             const lines = cellLines[cellIndex];
             lines.forEach((line, lineIndex) => {
-              doc.text(line, cellX + padX, cursorY + padY + lineIndex * lineHeight - 1);
+              doc.text(
+                line,
+                cellX + padX,
+                cursorY + padY + lineIndex * lineHeight - 1,
+              );
             });
             cellX += columnWidths[cellIndex];
           });
@@ -526,9 +553,14 @@ function App() {
       doc.setFont("helvetica", "normal");
       doc.setFontSize(9);
       doc.setTextColor(107, 114, 128);
-      doc.text(`Page ${page} of ${totalPages}`, pageWidth - margin, pageHeight - 18, {
-        align: "right",
-      });
+      doc.text(
+        `Page ${page} of ${totalPages}`,
+        pageWidth - margin,
+        pageHeight - 18,
+        {
+          align: "right",
+        },
+      );
     }
 
     doc.save(`${title}.pdf`);
@@ -781,17 +813,14 @@ function App() {
           </form>
         </section>
         {(answer || document) && (
-        <section className="result-panel" aria-live="polite">
+          <section className="result-panel" aria-live="polite">
             <div className="result-head">
               <span className="step-label">
                 {answer ? "ANSWER" : "TECHNICAL DOCUMENT"}
               </span>
               <div className="result-actions">
                 {document && (
-                  <button
-                    className="text-button"
-                    onClick={downloadDocumentPdf}
-                  >
+                  <button className="text-button" onClick={downloadDocumentPdf}>
                     Download PDF
                   </button>
                 )}
@@ -810,25 +839,30 @@ function App() {
                       );
                     }
                   }}
-                  >
-                    Copy
-                  </button>
+                >
+                  Copy
+                </button>
               </div>
             </div>
-            <div className="result-tabs" role="tablist" aria-label="Result views">
+            <div
+              className="result-tabs"
+              role="tablist"
+              aria-label="Result views"
+            >
               <button
                 type="button"
-                className={`tab-button ${resultTab === "document" ? "active" : ""}`}
-                onClick={() => setResultTab("document")}
-                disabled={!document}
+                className={`tab-button ${resultTab === "main" ? "active" : ""}`}
+                onClick={() => setResultTab("main")}
               >
-                Document
+                {answer ? "Answer" : "Document"}
               </button>
               <button
                 type="button"
                 className={`tab-button ${resultTab === "sources" ? "active" : ""}`}
                 onClick={() => setResultTab("sources")}
-                disabled={!((answer?.sources?.length) || (document?.sources?.length))}
+                disabled={
+                  !(answer?.sources?.length || document?.sources?.length)
+                }
               >
                 Sources
               </button>
@@ -863,7 +897,11 @@ function SourceList({ sources = [] }) {
           <span role="columnheader">Source</span>
         </div>
         {rows.map((row) => (
-          <div className="source-table-row" role="row" key={`${row.index}-${row.text}`}>
+          <div
+            className="source-table-row"
+            role="row"
+            key={`${row.index}-${row.text}`}
+          >
             <span role="cell">{row.index}</span>
             <span role="cell">{row.text}</span>
           </div>
