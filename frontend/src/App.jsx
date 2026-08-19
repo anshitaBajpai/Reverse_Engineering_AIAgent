@@ -592,6 +592,29 @@ function App() {
         `/projects/${encodeURIComponent(selectedProjectId)}/refresh`,
         { method: "POST" },
       );
+      if (result?.project_id) {
+        setProjects((current) =>
+          current.map((project) =>
+            project.project_id === result.project_id
+              ? {
+                  ...project,
+                  files_loaded:
+                    typeof result.files_loaded === "number"
+                      ? result.files_loaded
+                      : project.files_loaded,
+                  chunks_created:
+                    typeof result.chunks_created === "number"
+                      ? result.chunks_created
+                      : project.chunks_created,
+                  last_commit_sha:
+                    typeof result.commit_sha === "string"
+                      ? result.commit_sha
+                      : project.last_commit_sha,
+                }
+              : project,
+          ),
+        );
+      }
       await loadProjects();
       setProjectStatus(null);
       showNotice("success", result.message);
