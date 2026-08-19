@@ -71,6 +71,32 @@ public class ProjectRegistry {
         }
     }
 
+    public void registerRecovered(ProjectInfo info) {
+        ProjectInfo existing = registry.get(info.projectId());
+        if (existing != null) {
+            registry.put(info.projectId(), mergeRecovered(existing, info));
+        } else {
+            registry.put(info.projectId(), info);
+        }
+        try {
+            jdbcTemplate.update("""
+                    INSERT INTO project_registry
+                        (project_id, repo_url, ingested_at, last_commit_sha, files_loaded, chunks_created)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT (project_id) DO UPDATE SET
+                        repo_url = EXCLUDED.repo_url
+                    """,
+                    info.projectId(),
+                    info.repoUrl(),
+                    info.ingestedAt() != null ? Timestamp.from(info.ingestedAt()) : null,
+                    info.lastCommitSha(),
+                    info.filesLoaded(),
+                    info.chunksCreated());
+        } catch (Exception e) {
+            log.warn("Could not persist recovered project '{}': {}", info.projectId(), e.getMessage());
+        }
+    }
+
     public boolean remove(String projectId) {
         boolean removed = registry.remove(projectId) != null;
         try {
@@ -130,6 +156,16 @@ public class ProjectRegistry {
 
     private static Instant toInstant(Timestamp timestamp) {
         return timestamp != null ? timestamp.toInstant() : null;
+    }
+
+    private static ProjectInfo mergeRecovered(ProjectInfo existing, ProjectInfo recovered) {
+        return new ProjectInfo(
+                existing.projectId(),
+                recovered.repoUrl() != null ? recovered.repoUrl() : existing.repoUrl(),
+                existing.ingestedAt() != null ? existing.ingestedAt() : recovered.ingestedAt(),
+                existing.lastCommitSha() != null ? existing.lastCommitSha() : recovered.lastCommitSha(),
+                existing.filesLoaded() > 0 ? existing.filesLoaded() : recovered.filesLoaded(),
+                existing.chunksCreated() > 0 ? existing.chunksCreated() : recovered.chunksCreated());
     }
 
    

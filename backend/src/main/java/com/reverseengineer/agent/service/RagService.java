@@ -64,7 +64,7 @@ public class RagService {
                 String projectId = (String) row.get("project_id");
                 String repoUrl   = (String) row.get("repo_url");
                 if (projectId != null && repoUrl != null) {
-                    registry.register(new ProjectInfo(
+                    registry.registerRecovered(new ProjectInfo(
                             projectId, repoUrl, null, null, 0, 0));
                 }
             }
