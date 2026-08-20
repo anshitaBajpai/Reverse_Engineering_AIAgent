@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { jsPDF } from "jspdf";
@@ -239,6 +239,8 @@ function App() {
   const [busyAction, setBusyAction] = useState("");
   const [ingestStage, setIngestStage] = useState("");
   const [resultTab, setResultTab] = useState("main");
+  const [projectPickerOpen, setProjectPickerOpen] = useState(false);
+  const projectPickerRef = useRef(null);
 
   const isBackendOnline = backendStatus === "online";
   const selectedProject = projects.find(
@@ -261,6 +263,20 @@ function App() {
 
   const showNotice = (type, message) => setNotice({ type, message });
   const projectIds = selectedProjectId ? [selectedProjectId] : [];
+
+  useEffect(() => {
+    const onPointerDown = (event) => {
+      if (
+        projectPickerRef.current &&
+        !projectPickerRef.current.contains(event.target)
+      ) {
+        setProjectPickerOpen(false);
+      }
+    };
+
+    window.addEventListener("pointerdown", onPointerDown);
+    return () => window.removeEventListener("pointerdown", onPointerDown);
+  }, []);
 
   const loadProjects = useCallback(async () => {
     const data = await requestJson("/projects");
@@ -714,30 +730,56 @@ function App() {
           )}
         </section>
         <section className="project-bar">
-          <div className="project-picker">
+          <div className="project-picker" ref={projectPickerRef}>
             <label htmlFor="project">Active project</label>
-            <select
-              id="project"
-              value={selectedProjectId}
-              onChange={(event) => {
-                setSelectedProjectId(event.target.value);
-                setAnswer(null);
-                setDocument(null);
-                setProjectStatus(null);
-              }}
-              disabled={!projects.length}
-            >
-              <option value="">
-                {projects.length
-                  ? "Choose a project"
-                  : "No projects indexed yet"}
-              </option>
-              {projects.map((project) => (
-                <option key={project.project_id} value={project.project_id}>
-                  {project.repo_url}
-                </option>
-              ))}
-            </select>
+            <div className={`select-shell ${projectPickerOpen ? "open" : ""}`}>
+              <button
+                type="button"
+                className="select-trigger"
+                aria-haspopup="listbox"
+                aria-expanded={projectPickerOpen}
+                onClick={() => setProjectPickerOpen((current) => !current)}
+                disabled={!projects.length}
+              >
+                <span className="select-trigger-label">
+                  {selectedProject?.repo_url ||
+                    (projects.length
+                      ? "Choose a project"
+                      : "No projects indexed yet")}
+                </span>
+                <span className="select-trigger-icon" aria-hidden="true" />
+              </button>
+              {projectPickerOpen && projects.length > 0 && (
+                <div className="select-menu" role="listbox" aria-label="Projects">
+                  {projects.map((project) => {
+                    const isActive = project.project_id === selectedProjectId;
+                    return (
+                      <button
+                        key={project.project_id}
+                        type="button"
+                        role="option"
+                        aria-selected={isActive}
+                        className={`select-option ${isActive ? "active" : ""}`}
+                        onClick={() => {
+                          setSelectedProjectId(project.project_id);
+                          setAnswer(null);
+                          setDocument(null);
+                          setProjectStatus(null);
+                          setProjectPickerOpen(false);
+                        }}
+                      >
+                        <span className="select-option-main">
+                          {project.repo_url}
+                        </span>
+                        <span className="select-option-meta">
+                          {project.files_loaded} files · {project.chunks_created} chunks
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </div>
           {selectedProject && (
             <div className="project-meta">
