@@ -269,6 +269,130 @@ textarea {
   min-width: 260px;
 }
 
+.select-shell {
+  position: relative;
+  border-radius: 13px;
+  padding: 1px;
+  background: linear-gradient(135deg, rgba(90, 215, 255, 0.18), rgba(124, 140, 255, 0.1));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.select-shell::after {
+  content: "";
+  position: absolute;
+  inset: 1px;
+  border-radius: 12px;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent);
+}
+
+.select-shell.open {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 0 0 1px rgba(90, 215, 255, 0.18),
+    0 18px 32px rgba(0, 0, 0, 0.18);
+}
+
+.select-trigger {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 0;
+  border-radius: 12px;
+  padding: 12px 14px 12px 13px;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.035);
+  text-align: left;
+}
+
+.select-trigger-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.select-trigger-icon {
+  width: 9px;
+  height: 9px;
+  border-right: 2px solid var(--brand2);
+  border-bottom: 2px solid var(--brand2);
+  transform: translateY(-2px) rotate(45deg);
+  flex: 0 0 auto;
+}
+
+.select-shell.open .select-trigger-icon {
+  transform: translateY(1px) rotate(225deg);
+}
+
+.select-trigger:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.select-trigger:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.select-menu {
+  position: absolute;
+  z-index: 5;
+  left: 0;
+  right: 0;
+  top: calc(100% + 10px);
+  max-height: 280px;
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid rgba(144, 171, 255, 0.18);
+  border-radius: 16px;
+  background:
+    linear-gradient(180deg, rgba(17, 25, 38, 0.98), rgba(10, 16, 26, 0.98));
+  box-shadow: 0 22px 48px rgba(0, 0, 0, 0.34);
+  backdrop-filter: blur(12px);
+}
+
+.select-option {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 12px 12px;
+  border: 0;
+  border-radius: 12px;
+  color: var(--text);
+  background: transparent;
+  text-align: left;
+}
+
+.select-option + .select-option {
+  margin-top: 4px;
+}
+
+.select-option:hover,
+.select-option.active {
+  background: linear-gradient(135deg, rgba(90, 215, 255, 0.14), rgba(124, 140, 255, 0.1));
+}
+
+.select-option-main {
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.select-option-meta {
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.3;
+}
+
+.select-shell select {
+  position: relative;
+  z-index: 1;
+  border: 0;
+  background-color: rgba(255, 255, 255, 0.035);
+}
+
 .project-picker label {
   display: block;
   color: var(--muted);
