@@ -17,11 +17,16 @@ public record AppProperties(
         int maxDocumentK,
         int maxQuestionLength,
         int maxProjectNameLength,
+        int embeddingBatchSize,
         String githubToken,
         Long githubStatusTtlMs,
         Llm llm,
         Usage usage
 ) {
+    public int embeddingBatchSize() {
+        return embeddingBatchSize > 0 ? embeddingBatchSize : 100;
+    }
+
     public Long githubStatusTtlMs() {
         return githubStatusTtlMs != null ? githubStatusTtlMs : 60_000L;
     }

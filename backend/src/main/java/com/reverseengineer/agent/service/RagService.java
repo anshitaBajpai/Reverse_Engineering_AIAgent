@@ -109,8 +109,13 @@ public class RagService {
                     )))
                     .toList();
 
-            vectorStore.add(docs);
-            log.info("Stored {} chunks in vector store.", docs.size());
+            int batchSize = props.embeddingBatchSize();
+            for (int start = 0; start < docs.size(); start += batchSize) {
+                int end = Math.min(start + batchSize, docs.size());
+                vectorStore.add(docs.subList(start, end));
+                log.info("Stored chunks {}-{} of {} in vector store.",
+                        start + 1, end, docs.size());
+            }
 
             registry.register(new ProjectInfo(
                     projectId, repoUrl, Instant.now(), commitSha,
