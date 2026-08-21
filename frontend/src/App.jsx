@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { jsPDF } from "jspdf";
 import {
   API_BASE_URL,
   ingestRepositoryAsync,
@@ -400,7 +399,7 @@ function App() {
     }
   }
 
-  function downloadDocumentPdf() {
+  async function downloadDocumentPdf() {
     const content = document?.document || "";
     const normalizedContent = normalizeDocumentControl(
       normalizeDocumentSections(content),
@@ -414,6 +413,7 @@ function App() {
       return;
     }
 
+    const { jsPDF } = await import("jspdf");
     const title = escapeFilename(
       documentName || selectedProject?.repo_url || "Technical Document",
     );
