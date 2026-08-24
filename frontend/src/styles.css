@@ -305,6 +305,10 @@ textarea {
   color: var(--text);
   background: rgba(255, 255, 255, 0.035);
   text-align: left;
+  transition:
+    background 0.2s ease,
+    box-shadow 0.2s ease,
+    transform 0.2s ease;
 }
 
 .select-trigger-label {
@@ -327,7 +331,16 @@ textarea {
 }
 
 .select-trigger:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow: inset 0 0 0 1px rgba(90, 215, 255, 0.12);
+  transform: translateY(-1px);
+}
+
+.select-trigger:focus-visible:not(:disabled) {
+  outline: none;
+  box-shadow:
+    inset 0 0 0 1px rgba(90, 215, 255, 0.2),
+    0 0 0 3px rgba(90, 215, 255, 0.12);
 }
 
 .select-trigger:disabled {
@@ -364,6 +377,11 @@ textarea {
   color: var(--text);
   background: transparent;
   text-align: left;
+  cursor: pointer;
+  transition:
+    background 0.18s ease,
+    box-shadow 0.18s ease,
+    transform 0.18s ease;
 }
 
 .select-option + .select-option {
@@ -371,8 +389,15 @@ textarea {
 }
 
 .select-option:hover,
+.select-option:focus-visible,
 .select-option.active {
   background: linear-gradient(135deg, rgba(90, 215, 255, 0.14), rgba(124, 140, 255, 0.1));
+  box-shadow: inset 0 0 0 1px rgba(90, 215, 255, 0.12);
+  transform: translateY(-1px);
+}
+
+.select-option:focus-visible {
+  outline: none;
 }
 
 .select-option-main {
