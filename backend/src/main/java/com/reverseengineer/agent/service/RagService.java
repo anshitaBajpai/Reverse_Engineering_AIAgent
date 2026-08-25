@@ -14,6 +14,9 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
 import java.nio.file.Path;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.locks.ReentrantLock;
@@ -31,6 +34,7 @@ public class RagService {
     private final LlmService llm;
     private final AppProperties props;
     private final ProjectRegistry registry;
+    private final ResponseCacheService responseCache;
 
     private final ReentrantLock ingestLock = new ReentrantLock();
     private static final int MIN_DOCUMENT_RETRIEVAL_K = 12;
@@ -41,7 +45,8 @@ public class RagService {
                       ChunkerService chunker,
                       LlmService llm,
                       AppProperties props,
-                      ProjectRegistry registry) {
+                      ProjectRegistry registry,
+                      ResponseCacheService responseCache) {
         this.vectorStore = vectorStore;
         this.jdbcTemplate = jdbcTemplate;
         this.repoLoader = repoLoader;
@@ -49,6 +54,7 @@ public class RagService {
         this.llm = llm;
         this.props = props;
         this.registry = registry;
+        this.responseCache = responseCache;
     }
 
     @PostConstruct
@@ -138,12 +144,23 @@ public class RagService {
         List<String> normalizedProjectIds = normalizeProjectIds(projectIds);
         requireKnownProjects(normalizedProjectIds);
         int effectiveK = Math.min(Math.max(k, 1), props.maxQueryK());
-        SearchRequest request = buildSearchRequest(question, effectiveK, normalizedProjectIds);
-        List<Document> results = deduplicateDocuments(vectorStore.similaritySearch(request));
+        String cacheKey = responseCacheKey(
+                "question", normalizedProjectIds, question, effectiveK, "");
+        Optional<Map<String, Object>> cached = responseCache.get(cacheKey);
+        if (cached.isPresent()) {
+            log.info("Response cache hit for question (entries={}).", responseCache.size());
+            return cached.get();
+        }
+        int searchK = retrievalCandidateCount(effectiveK, props.maxQueryK());
+        SearchRequest request = buildSearchRequest(question, searchK, normalizedProjectIds);
+        List<Document> results = selectDiverseDocuments(
+                deduplicateDocuments(vectorStore.similaritySearch(request)), effectiveK);
         List<String> formatted = results.stream().map(this::formatChunk).toList();
         String context = String.join("\n\n", formatted);
         String answer  = llm.askLlm(question, context, identity);
-        return Map.of("answer", answer, "sources", formatted);
+        Map<String, Object> response = Map.of("answer", answer, "sources", formatted);
+        responseCache.put(cacheKey, response);
+        return response;
     }
 
     public Map<String, Object> generateDocument(String projectName, int k,
@@ -152,11 +169,17 @@ public class RagService {
         List<String> normalizedProjectIds = normalizeProjectIds(projectIds);
         requireKnownProjects(normalizedProjectIds);
         int effectiveK = Math.min(Math.max(k, 1), props.maxDocumentK());
+        String cacheKey = responseCacheKey(
+                "document", normalizedProjectIds, projectName, effectiveK, "document");
+        Optional<Map<String, Object>> cached = responseCache.get(cacheKey);
+        if (cached.isPresent()) {
+            log.info("Response cache hit for document (entries={}).", responseCache.size());
+            return cached.get();
+        }
 
         List<Document> retrieved = retrieveDocumentsForDocumentGeneration(normalizedProjectIds, effectiveK);
-        List<Document> deduped = deduplicateDocuments(retrieved);
-        int cap = Math.min(effectiveK, deduped.size());
-        deduped = deduped.subList(0, cap);
+        List<Document> deduped = selectDiverseDocuments(
+                deduplicateDocuments(retrieved), effectiveK);
 
         List<ProjectInfo> scopedProjects = normalizedProjectIds.isEmpty()
                 ? registry.findAll()
@@ -174,11 +197,13 @@ public class RagService {
 
         Map<String, Object> chainResult = llm.runReverseEngineeringChain(context, projectName, identity);
 
-        return Map.of(
+        Map<String, Object> response = Map.of(
                 "document",    chainResult.get("document"),
                 "chain_steps", chainResult.get("chain_steps"),
                 "sources",     formatted
         );
+        responseCache.put(cacheKey, response);
+        return response;
     }
 
     public List<ProjectInfo> listProjects() {
@@ -240,6 +265,77 @@ public class RagService {
         int searchK = Math.min(Math.max(k * 3, MIN_DOCUMENT_RETRIEVAL_K), props.maxDocumentK());
         return vectorStore.similaritySearch(
                 buildSearchRequest(retrievalQuery, searchK, projectIds));
+    }
+
+    private static int retrievalCandidateCount(int requestedK, int maximumK) {
+        // Over-fetching gives the diversity pass enough alternatives when the
+        // closest chunks are concentrated in one large file.
+        return Math.min(maximumK, Math.max(requestedK, requestedK * 3));
+    }
+
+    private String responseCacheKey(String type, List<String> projectIds,
+                                    String prompt, int k, String variant) {
+        String projectVersion = registry.findByIds(projectIds).stream()
+                .sorted(Comparator.comparing(ProjectInfo::projectId))
+                .map(project -> project.projectId() + "="
+                        + Objects.toString(project.lastCommitSha(), "unknown"))
+                .collect(Collectors.joining(","));
+        String raw = String.join("|", type, projectVersion, variant,
+                Integer.toString(k), Objects.toString(prompt, "").trim());
+        return type + ":" + sha256(raw);
+    }
+
+    private static String sha256(String value) {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                    .digest(value.getBytes(StandardCharsets.UTF_8));
+            StringBuilder hex = new StringBuilder(digest.length * 2);
+            for (byte part : digest) {
+                hex.append(String.format("%02x", part));
+            }
+            return hex.toString();
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is unavailable", e);
+        }
+    }
+
+    private static List<Document> selectDiverseDocuments(List<Document> documents, int limit) {
+        if (documents.size() <= limit) {
+            return documents;
+        }
+
+        List<Document> selected = new ArrayList<>(limit);
+        Set<String> selectedFiles = new HashSet<>();
+
+        // First pass: cover as many distinct files as possible while keeping
+        // the vector store's relevance ordering within each file.
+        for (Document document : documents) {
+            if (selected.size() == limit) {
+                break;
+            }
+            if (selectedFiles.add(documentFileKey(document))) {
+                selected.add(document);
+            }
+        }
+
+        // Second pass: use the remaining slots for the next-best chunks.
+        if (selected.size() < limit) {
+            for (Document document : documents) {
+                if (selected.size() == limit) {
+                    break;
+                }
+                if (!selected.contains(document)) {
+                    selected.add(document);
+                }
+            }
+        }
+        return selected;
+    }
+
+    private static String documentFileKey(Document document) {
+        Map<String, Object> metadata = document.getMetadata();
+        return Objects.toString(metadata.get("project_id"), "") + ":"
+                + Objects.toString(metadata.get("file_path"), "");
     }
 
     String formatChunk(Document doc) {
