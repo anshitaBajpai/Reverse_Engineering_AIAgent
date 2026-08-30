@@ -35,9 +35,15 @@ public class RagService {
     private final AppProperties props;
     private final ProjectRegistry registry;
     private final ResponseCacheService responseCache;
+    private final UsageGuardService usageGuard;
 
     private final ReentrantLock ingestLock = new ReentrantLock();
     private static final int MIN_DOCUMENT_RETRIEVAL_K = 12;
+
+    // Rough bytes-per-token ratio for English/source text. Used only to bill an
+    // ingest's embedding calls against the daily usage budget; the embedding API
+    // does not return token counts through VectorStore.add().
+    private static final int CHARS_PER_TOKEN_ESTIMATE = 4;
 
     public RagService(VectorStore vectorStore,
                       JdbcTemplate jdbcTemplate,
@@ -46,7 +52,8 @@ public class RagService {
                       LlmService llm,
                       AppProperties props,
                       ProjectRegistry registry,
-                      ResponseCacheService responseCache) {
+                      ResponseCacheService responseCache,
+                      UsageGuardService usageGuard) {
         this.vectorStore = vectorStore;
         this.jdbcTemplate = jdbcTemplate;
         this.repoLoader = repoLoader;
@@ -55,6 +62,7 @@ public class RagService {
         this.props = props;
         this.registry = registry;
         this.responseCache = responseCache;
+        this.usageGuard = usageGuard;
     }
 
     @PostConstruct
@@ -82,7 +90,7 @@ public class RagService {
         }
     }
 
-    public Map<String, Object> ingestRepo(String repoUrl) throws Exception {
+    public Map<String, Object> ingestRepo(String repoUrl, String identity) throws Exception {
         log.info(">>> INGEST START: {}", repoUrl);
         if (!ingestLock.tryLock()) {
             throw new IllegalStateException(
@@ -123,9 +131,15 @@ public class RagService {
                         start + 1, end, docs.size());
             }
 
+            recordEmbeddingUsage(identity, docs);
+
             registry.register(new ProjectInfo(
                     projectId, repoUrl, Instant.now(), commitSha,
                     files.size(), chunks.size()));
+
+            // The corpus just changed; drop any answers/documents built from the
+            // previous state so a re-ingest can never serve a stale response.
+            responseCache.clear();
 
             return Map.of(
                     "project_id",     projectId,
@@ -223,6 +237,9 @@ public class RagService {
         if (removed) {
             repoLoader.deleteProjectClone(projectId);
         }
+        // Even a failed lookup is cheap to clear, and a delete followed by a
+        // same-SHA re-ingest must not resurrect the deleted project's answers.
+        responseCache.clear();
         return removed;
     }
 
@@ -378,6 +395,17 @@ public class RagService {
         }
     }
     
+
+    
+    private void recordEmbeddingUsage(String identity, List<Document> docs) {
+        long estimatedTokens = docs.stream()
+                .map(Document::getText)
+                .filter(Objects::nonNull)
+                .mapToLong(text -> (long) text.length())
+                .sum() / CHARS_PER_TOKEN_ESTIMATE;
+        int clamped = (int) Math.min(estimatedTokens, Integer.MAX_VALUE);
+        usageGuard.recordUsage(identity, clamped, 0);
+    }
 
     private void clearProject(String projectId) {
         try {
