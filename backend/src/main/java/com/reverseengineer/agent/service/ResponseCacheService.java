@@ -51,6 +51,15 @@ public class ResponseCacheService {
         return values.size();
     }
 
+    /**
+     * Drops every cached response. Called whenever the underlying corpus changes
+     * (a project is ingested, re-ingested, or deleted) so a stale answer or
+     * document can never outlive the data it was built from.
+     */
+    public synchronized void clear() {
+        values.clear();
+    }
+
     private void removeExpired() {
         long now = System.currentTimeMillis();
         values.entrySet().removeIf(entry -> entry.getValue().expiresAtMillis() <= now);
