@@ -1057,6 +1057,7 @@ function AuthView({ onAuthenticated, backendStatus }) {
   const [mode, setMode] = useState("login");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [signupCode, setSignupCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -1075,8 +1076,9 @@ function AuthView({ onAuthenticated, backendStatus }) {
     }
     setBusy(true);
     try {
-      const action = isRegister ? register : login;
-      const { user } = await action(username.trim(), password);
+      const { user } = isRegister
+        ? await register(username.trim(), password, signupCode.trim())
+        : await login(username.trim(), password);
       onAuthenticated(user);
     } catch (err) {
       setError(err.message || "Authentication failed.");
@@ -1113,6 +1115,17 @@ function AuthView({ onAuthenticated, backendStatus }) {
             onChange={(event) => setPassword(event.target.value)}
             placeholder="At least 8 characters"
           />
+          {isRegister && (
+            <>
+              <label htmlFor="auth-code">Invite code</label>
+              <input
+                id="auth-code"
+                value={signupCode}
+                onChange={(event) => setSignupCode(event.target.value)}
+                placeholder="Provided by the site owner"
+              />
+            </>
+          )}
           {error && (
             <div className="notice error" role="alert">
               {error}

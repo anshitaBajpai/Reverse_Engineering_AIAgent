@@ -15,5 +15,8 @@ public record AuthRequest(
 
         @NotBlank(message = "password must not be blank")
         @Size(min = 8, max = 200, message = "password must be 8-200 characters")
-        String password
+        String password,
+
+        /** Only checked by {@code /auth/register}, and only when {@code SIGNUP_CODE} is configured. */
+        String signupCode
 ) {}

@@ -89,7 +89,8 @@ public record AppProperties(
     public record Auth(
             String jwtSecret,
             String jwtIssuer,
-            long jwtTtlSeconds
+            long jwtTtlSeconds,
+            String signupCode
     ) {
         public String jwtIssuer() {
             return jwtIssuer != null && !jwtIssuer.isBlank()
@@ -98,6 +99,11 @@ public record AppProperties(
 
         public long jwtTtlSeconds() {
             return jwtTtlSeconds > 0 ? jwtTtlSeconds : 3600L;
+        }
+
+        /** When set, {@code /auth/register} requires a matching {@code signup_code}. */
+        public boolean signupCodeRequired() {
+            return signupCode != null && !signupCode.isBlank();
         }
     }
 }

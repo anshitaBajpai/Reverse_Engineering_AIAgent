@@ -172,11 +172,11 @@ export async function login(username, password) {
   return finishAuth(data);
 }
 
-export async function register(username, password) {
+export async function register(username, password, signupCode) {
   const data = await requestJson("/auth/register", {
     auth: false,
     method: "POST",
-    body: { username, password },
+    body: { username, password, signup_code: signupCode || undefined },
   });
   return finishAuth(data);
 }

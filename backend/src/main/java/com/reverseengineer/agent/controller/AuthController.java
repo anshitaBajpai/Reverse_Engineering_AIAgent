@@ -1,5 +1,6 @@
 package com.reverseengineer.agent.controller;
 
+import com.reverseengineer.agent.config.AppProperties;
 import com.reverseengineer.agent.model.AuthRequest;
 import com.reverseengineer.agent.model.AuthResponse;
 import com.reverseengineer.agent.model.UserAccount;
@@ -15,6 +16,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -34,19 +38,23 @@ public class AuthController {
     private final JwtIssuer jwtIssuer;
     private final RateLimiterService rateLimiter;
     private final UserQuotaService userQuota;
+    private final AppProperties props;
 
     public AuthController(UserAccountService users, JwtIssuer jwtIssuer,
-                         RateLimiterService rateLimiter, UserQuotaService userQuota) {
+                         RateLimiterService rateLimiter, UserQuotaService userQuota,
+                         AppProperties props) {
         this.users = users;
         this.jwtIssuer = jwtIssuer;
         this.rateLimiter = rateLimiter;
         this.userQuota = userQuota;
+        this.props = props;
     }
 
     @PostMapping("/register")
     public ResponseEntity<AuthResponse> register(@Valid @RequestBody AuthRequest body,
                                                  HttpServletRequest httpReq) {
         rateLimit(httpReq);
+        requireValidSignupCode(body.signupCode());
         UserAccount user;
         try {
             user = users.register(body.username(), body.password());
@@ -86,6 +94,20 @@ public class AuthController {
         if (!rateLimiter.isAllowed(ClientIp.of(httpReq), RateLimiterService.Endpoint.AUTH)) {
             throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS,
                     "Too many attempts. Please wait a minute and try again.");
+        }
+    }
+
+    /** No-op unless {@code SIGNUP_CODE} is configured; then the request must carry a matching code. */
+    private void requireValidSignupCode(String provided) {
+        AppProperties.Auth auth = props.auth();
+        if (auth == null || !auth.signupCodeRequired()) {
+            return;
+        }
+        byte[] expected = auth.signupCode().strip().getBytes(StandardCharsets.UTF_8);
+        byte[] given = (provided == null ? "" : provided.strip()).getBytes(StandardCharsets.UTF_8);
+        if (!MessageDigest.isEqual(expected, given)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                    "A valid signup code is required to create an account.");
         }
     }
 }
