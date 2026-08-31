@@ -70,7 +70,8 @@ public class RagService {
         try {
             List<Map<String, Object>> rows = jdbcTemplate.queryForList(
                     "SELECT DISTINCT metadata->>'project_id' AS project_id, " +
-                    "                metadata->>'repo_url'   AS repo_url " +
+                    "                metadata->>'repo_url'   AS repo_url, " +
+                    "                metadata->>'owner_id'   AS owner_id " +
                     "FROM   vector_store " +
                     "WHERE  metadata->>'project_id' IS NOT NULL");
 
@@ -79,7 +80,8 @@ public class RagService {
                 String repoUrl   = (String) row.get("repo_url");
                 if (projectId != null && repoUrl != null) {
                     registry.registerRecovered(new ProjectInfo(
-                            projectId, repoUrl, null, null, 0, 0));
+                            projectId, repoUrl, null, null, 0, 0,
+                            ownerIdFromKey((String) row.get("owner_id"))));
                 }
             }
             if (!rows.isEmpty()) {
@@ -90,7 +92,7 @@ public class RagService {
         }
     }
 
-    public Map<String, Object> ingestRepo(String repoUrl, String identity) throws Exception {
+    public Map<String, Object> ingestRepo(String repoUrl, String identity, Long ownerId) throws Exception {
         log.info(">>> INGEST START: {}", repoUrl);
         if (!ingestLock.tryLock()) {
             throw new IllegalStateException(
@@ -98,7 +100,9 @@ public class RagService {
         }
         try {
             repoLoader.validateRepoUrl(repoUrl);
-            String projectId = ProjectRegistry.toProjectId(repoUrl);
+            String projectId = ProjectRegistry.toProjectId(repoUrl, ownerId);
+            enforceProjectLimits(projectId, ownerId);
+            String ownerKey = ownerKey(ownerId);
             Path localPath = repoLoader.projectPath(projectId);
             log.info("Cloning into {} (project_id={})", localPath, projectId);
 
@@ -115,6 +119,7 @@ public class RagService {
             List<Document> docs = chunks.stream()
                     .map(c -> new Document(c.text(), Map.of(
                             "project_id",  projectId,
+                            "owner_id",    ownerKey,
                             "repo_url",    repoUrl,
                             "file_path",   c.filePath(),
                             "chunk_index", c.chunkIndex(),
@@ -135,7 +140,7 @@ public class RagService {
 
             registry.register(new ProjectInfo(
                     projectId, repoUrl, Instant.now(), commitSha,
-                    files.size(), chunks.size()));
+                    files.size(), chunks.size(), ownerId));
 
             // The corpus just changed; drop any answers/documents built from the
             // previous state so a re-ingest can never serve a stale response.
@@ -153,20 +158,20 @@ public class RagService {
     }
 
     public Map<String, Object> askQuestion(String question, int k, List<String> projectIds,
-                                            String identity) {
-        requireIngested();
+                                            String identity, Long ownerId) {
+        requireIngested(ownerId);
         List<String> normalizedProjectIds = normalizeProjectIds(projectIds);
-        requireKnownProjects(normalizedProjectIds);
+        requireKnownProjects(normalizedProjectIds, ownerId);
         int effectiveK = Math.min(Math.max(k, 1), props.maxQueryK());
         String cacheKey = responseCacheKey(
-                "question", normalizedProjectIds, question, effectiveK, "");
+                "question", normalizedProjectIds, question, effectiveK, "", ownerId);
         Optional<Map<String, Object>> cached = responseCache.get(cacheKey);
         if (cached.isPresent()) {
             log.info("Response cache hit for question (entries={}).", responseCache.size());
             return cached.get();
         }
         int searchK = retrievalCandidateCount(effectiveK, props.maxQueryK());
-        SearchRequest request = buildSearchRequest(question, searchK, normalizedProjectIds);
+        SearchRequest request = buildSearchRequest(question, searchK, normalizedProjectIds, ownerId);
         List<Document> results = selectDiverseDocuments(
                 deduplicateDocuments(vectorStore.similaritySearch(request)), effectiveK);
         List<String> formatted = results.stream().map(this::formatChunk).toList();
@@ -178,26 +183,25 @@ public class RagService {
     }
 
     public Map<String, Object> generateDocument(String projectName, int k,
-                                                 List<String> projectIds, String identity) {
-        requireIngested();
+                                                 List<String> projectIds, String identity, Long ownerId) {
+        requireIngested(ownerId);
         List<String> normalizedProjectIds = normalizeProjectIds(projectIds);
-        requireKnownProjects(normalizedProjectIds);
+        requireKnownProjects(normalizedProjectIds, ownerId);
         int effectiveK = Math.min(Math.max(k, 1), props.maxDocumentK());
         String cacheKey = responseCacheKey(
-                "document", normalizedProjectIds, projectName, effectiveK, "document");
+                "document", normalizedProjectIds, projectName, effectiveK, "document", ownerId);
         Optional<Map<String, Object>> cached = responseCache.get(cacheKey);
         if (cached.isPresent()) {
             log.info("Response cache hit for document (entries={}).", responseCache.size());
             return cached.get();
         }
 
-        List<Document> retrieved = retrieveDocumentsForDocumentGeneration(normalizedProjectIds, effectiveK);
+        List<Document> retrieved = retrieveDocumentsForDocumentGeneration(
+                normalizedProjectIds, effectiveK, ownerId);
         List<Document> deduped = selectDiverseDocuments(
                 deduplicateDocuments(retrieved), effectiveK);
 
-        List<ProjectInfo> scopedProjects = normalizedProjectIds.isEmpty()
-                ? registry.findAll()
-                : registry.findByIds(normalizedProjectIds);
+        List<ProjectInfo> scopedProjects = registry.findByIdsForOwner(normalizedProjectIds, ownerId);
 
         StringBuilder treeSection = new StringBuilder("## Repository Trees\n");
         for (ProjectInfo project : scopedProjects) {
@@ -220,39 +224,46 @@ public class RagService {
         return response;
     }
 
-    public List<ProjectInfo> listProjects() {
-        return registry.findAll();
+    public List<ProjectInfo> listProjects(Long ownerId) {
+        return registry.findAllForOwner(ownerId);
     }
 
-    public boolean deleteProject(String projectId) {
+    public boolean deleteProject(String projectId, Long ownerId) {
+        if (registry.findByIdForOwner(projectId, ownerId).isEmpty()) {
+            return false;
+        }
         try {
             jdbcTemplate.update(
-                    "DELETE FROM vector_store WHERE metadata->>'project_id' = ?",
-                    projectId);
+                    "DELETE FROM vector_store WHERE metadata->>'project_id' = ? "
+                    + "AND metadata->>'owner_id' = ?",
+                    projectId, ownerKey(ownerId));
             log.info("Deleted vector store data for project '{}'.", projectId);
         } catch (Exception e) {
             log.warn("Could not delete vector store data for '{}': {}", projectId, e.getMessage());
         }
-        boolean removed = registry.remove(projectId);
+        boolean removed = registry.remove(projectId, ownerId);
         if (removed) {
             repoLoader.deleteProjectClone(projectId);
         }
-        // Even a failed lookup is cheap to clear, and a delete followed by a
-        // same-SHA re-ingest must not resurrect the deleted project's answers.
+        // A delete followed by a same-SHA re-ingest must not resurrect the
+        // deleted project's cached answers.
         responseCache.clear();
         return removed;
     }
 
     private static SearchRequest buildSearchRequest(String query, int k,
-                                                     List<String> projectIds) {
+                                                     List<String> projectIds, Long ownerId) {
         var builder = SearchRequest.builder().query(query).topK(k);
-        if (!projectIds.isEmpty()) {
-            // project_id values are [a-z0-9-] only — safe to embed in filter expression
-            String filter = projectIds.stream()
+        // owner_id and project_id values are [a-z0-9_-] only — safe to embed literally.
+        String ownerClause = "owner_id == '" + ownerKey(ownerId) + "'";
+        if (projectIds.isEmpty()) {
+            builder.filterExpression(ownerClause);
+        } else {
+            String projectClause = projectIds.stream()
                     .distinct()
                     .map(id -> "project_id == '" + id + "'")
                     .collect(Collectors.joining(" OR "));
-            builder.filterExpression(filter);
+            builder.filterExpression(ownerClause + " AND (" + projectClause + ")");
         }
         return builder.build();
     }
@@ -270,7 +281,7 @@ public class RagService {
     }
 
     private List<Document> retrieveDocumentsForDocumentGeneration(
-            List<String> projectIds, int k) {
+            List<String> projectIds, int k, Long ownerId) {
         String retrievalQuery = String.join(" ",
                 "application entry points startup initialization routing controllers API endpoints",
                 "overall architecture modules services components layers package structure",
@@ -281,7 +292,7 @@ public class RagService {
 
         int searchK = Math.min(Math.max(k * 3, MIN_DOCUMENT_RETRIEVAL_K), props.maxDocumentK());
         return vectorStore.similaritySearch(
-                buildSearchRequest(retrievalQuery, searchK, projectIds));
+                buildSearchRequest(retrievalQuery, searchK, projectIds, ownerId));
     }
 
     private static int retrievalCandidateCount(int requestedK, int maximumK) {
@@ -291,15 +302,31 @@ public class RagService {
     }
 
     private String responseCacheKey(String type, List<String> projectIds,
-                                    String prompt, int k, String variant) {
-        String projectVersion = registry.findByIds(projectIds).stream()
+                                    String prompt, int k, String variant, Long ownerId) {
+        String projectVersion = registry.findByIdsForOwner(projectIds, ownerId).stream()
                 .sorted(Comparator.comparing(ProjectInfo::projectId))
                 .map(project -> project.projectId() + "="
                         + Objects.toString(project.lastCommitSha(), "unknown"))
                 .collect(Collectors.joining(","));
-        String raw = String.join("|", type, projectVersion, variant,
+        String raw = String.join("|", type, ownerKey(ownerId), projectVersion, variant,
                 Integer.toString(k), Objects.toString(prompt, "").trim());
         return type + ":" + sha256(raw);
+    }
+
+    /** Metadata/filter representation of an owner: the numeric id, or a sentinel for shared/MCP data. */
+    private static String ownerKey(Long ownerId) {
+        return ownerId != null ? ownerId.toString() : "__shared__";
+    }
+
+    private static Long ownerIdFromKey(String ownerKey) {
+        if (ownerKey == null || ownerKey.isBlank() || "__shared__".equals(ownerKey)) {
+            return null;
+        }
+        try {
+            return Long.parseLong(ownerKey.trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     private static String sha256(String value) {
@@ -375,20 +402,45 @@ public class RagService {
         return "### File: " + projectPrefix + filePath + lineLabel + "\n" + doc.getText();
     }
 
-    private void requireIngested() {
-        if (registry.isEmpty()) {
+    private void requireIngested(Long ownerId) {
+        if (registry.isEmptyForOwner(ownerId)) {
             throw new IllegalArgumentException(
                     "No repository has been ingested yet. "
                     + "Call the /ingest endpoint first.");
         }
     }
 
-    private void requireKnownProjects(List<String> projectIds) {
+    /**
+     * Caps the number of ingested projects so the vector store cannot grow
+     * without bound. Re-ingesting an existing project replaces it in place and
+     * is always allowed.
+     *
+     * @throws IllegalStateException (mapped to HTTP 409) when a limit is hit
+     */
+    private void enforceProjectLimits(String projectId, Long ownerId) {
+        if (registry.findByIdForOwner(projectId, ownerId).isPresent()) {
+            return; // re-ingest, not a new slot
+        }
+        int perUser = props.limits().maxProjectsPerUser();
+        if (ownerId != null && perUser > 0
+                && registry.findAllForOwner(ownerId).size() >= perUser) {
+            throw new IllegalStateException(
+                    "You have reached the limit of " + perUser
+                    + " projects. Delete one before ingesting another.");
+        }
+        int total = props.limits().maxProjectsTotal();
+        if (total > 0 && registry.totalCount() >= total) {
+            throw new IllegalStateException(
+                    "The service is at project capacity. Please try again later.");
+        }
+    }
+
+    private void requireKnownProjects(List<String> projectIds, Long ownerId) {
         if (projectIds == null || projectIds.isEmpty()) {
             return;
         }
         for (String projectId : projectIds) {
-            if (registry.findById(projectId).isEmpty()) {
+            if (registry.findByIdForOwner(projectId, ownerId).isEmpty()) {
                 throw new IllegalArgumentException(
                         "Project '" + projectId + "' not found.");
             }

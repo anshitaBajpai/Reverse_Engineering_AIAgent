@@ -1,0 +1,9 @@
+.git
+**/target
+**/node_modules
+frontend/dist
+repo/
+*.log
+.env
+.env.*
+!.env.example

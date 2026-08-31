@@ -2,8 +2,8 @@ package com.reverseengineer.agent.controller;
 
 import com.reverseengineer.agent.config.AppProperties;
 import com.reverseengineer.agent.model.*;
+import com.reverseengineer.agent.security.CurrentUser;
 import com.reverseengineer.agent.service.*;
-import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,6 +31,7 @@ public class AgentController {
     private final ProjectRegistry registry;
     private final AsyncJobService asyncJobs;
     private final UsageGuardService usageGuard;
+    private final UserQuotaService userQuota;
 
     public AgentController(RagService ragService,
                            AppProperties props,
@@ -38,7 +39,8 @@ public class AgentController {
                            GitHubService gitHub,
                            ProjectRegistry registry,
                            AsyncJobService asyncJobs,
-                           UsageGuardService usageGuard) {
+                           UsageGuardService usageGuard,
+                           UserQuotaService userQuota) {
         this.ragService   = ragService;
         this.props        = props;
         this.rateLimiter  = rateLimiter;
@@ -46,6 +48,7 @@ public class AgentController {
         this.registry     = registry;
         this.asyncJobs    = asyncJobs;
         this.usageGuard   = usageGuard;
+        this.userQuota    = userQuota;
     }
 
     @GetMapping("/health")
@@ -59,12 +62,14 @@ public class AgentController {
     }
 
     @PostMapping("/ingest")
-    public ResponseEntity<IngestResponse> ingest(@Valid @RequestBody IngestRequest body,
-                                                  HttpServletRequest httpReq) {
-        checkRateLimit(httpReq, RateLimiterService.Endpoint.INGEST);
-        log.info(">>> CONTROLLER: ingest called for {}", body.repoUrl());
+    public ResponseEntity<IngestResponse> ingest(@Valid @RequestBody IngestRequest body) {
+        long ownerId = CurrentUser.id();
+        String identity = CurrentUser.identity();
+        checkRateLimit(identity, RateLimiterService.Endpoint.INGEST);
+        checkUsageBudget(identity);
+        log.info(">>> CONTROLLER: ingest called for {} by {}", body.repoUrl(), identity);
         try {
-            Map<String, Object> result = ragService.ingestRepo(body.repoUrl());
+            Map<String, Object> result = ragService.ingestRepo(body.repoUrl(), identity, ownerId);
             return ResponseEntity.ok(new IngestResponse(
                     "Repository ingested successfully.",
                     (String) result.get("project_id"),
@@ -84,13 +89,15 @@ public class AgentController {
     }
 
     @PostMapping("/ingest/async")
-    public ResponseEntity<AsyncJobInfo> ingestAsync(@Valid @RequestBody IngestRequest body,
-                                                      HttpServletRequest httpReq) {
-        checkRateLimit(httpReq, RateLimiterService.Endpoint.INGEST);
+    public ResponseEntity<AsyncJobInfo> ingestAsync(@Valid @RequestBody IngestRequest body) {
+        long ownerId = CurrentUser.id();
+        String identity = CurrentUser.identity();
+        checkRateLimit(identity, RateLimiterService.Endpoint.INGEST);
+        checkUsageBudget(identity);
         String repoUrl = body.repoUrl();
-        AsyncJobInfo job = asyncJobs.submit("ingest", () -> {
+        AsyncJobInfo job = asyncJobs.submit("ingest", ownerId, () -> {
             try {
-                return ragService.ingestRepo(repoUrl);
+                return ragService.ingestRepo(repoUrl, identity, ownerId);
             } catch (IllegalArgumentException | IllegalStateException e) {
                 throw new RuntimeException(e.getMessage(), e);
             } catch (Exception e) {
@@ -104,17 +111,18 @@ public class AgentController {
 
     @GetMapping("/jobs/{jobId}")
     public ResponseEntity<AsyncJobInfo> jobStatus(@PathVariable String jobId) {
-        AsyncJobInfo job = asyncJobs.findById(jobId)
+        long ownerId = CurrentUser.id();
+        AsyncJobInfo job = asyncJobs.findByIdForOwner(jobId, ownerId)
                 .orElseThrow(() -> new ResponseStatusException(NOT_FOUND,
                         "Job '" + jobId + "' not found."));
         return ResponseEntity.ok(job);
     }
 
     @PostMapping("/query")
-    public ResponseEntity<QueryResponse> query(@Valid @RequestBody QueryRequest body,
-                                                HttpServletRequest httpReq) {
-        checkRateLimit(httpReq, RateLimiterService.Endpoint.QUERY);
-        String identity = getClientIp(httpReq);
+    public ResponseEntity<QueryResponse> query(@Valid @RequestBody QueryRequest body) {
+        long ownerId = CurrentUser.id();
+        String identity = CurrentUser.identity();
+        checkRateLimit(identity, RateLimiterService.Endpoint.QUERY);
         checkUsageBudget(identity);
         int k = Math.min(body.k(), props.maxQueryK());
 
@@ -123,26 +131,29 @@ public class AgentController {
                     "question exceeds maximum length of " + props.maxQuestionLength());
         }
 
+        userQuota.reserveQuery(ownerId);
         try {
             Map<String, Object> result = ragService.askQuestion(
-                    body.question(), k, body.projectIds(), identity);
+                    body.question(), k, body.projectIds(), identity, ownerId);
             @SuppressWarnings("unchecked")
             List<String> sources = (List<String>) result.get("sources");
             return ResponseEntity.ok(new QueryResponse(
                     (String) result.get("answer"), sources));
         } catch (IllegalArgumentException e) {
+            userQuota.refundQuery(ownerId);
             throw new ResponseStatusException(BAD_REQUEST, e.getMessage());
         } catch (RuntimeException e) {
+            userQuota.refundQuery(ownerId);
             log.error("Query failed", e);
             throw new ResponseStatusException(INTERNAL_SERVER_ERROR, "Query failed.");
         }
     }
 
     @PostMapping("/document")
-    public ResponseEntity<DocumentResponse> document(@Valid @RequestBody DocumentRequest body,
-                                                      HttpServletRequest httpReq) {
-        checkRateLimit(httpReq, RateLimiterService.Endpoint.DOCUMENT);
-        String identity = getClientIp(httpReq);
+    public ResponseEntity<DocumentResponse> document(@Valid @RequestBody DocumentRequest body) {
+        long ownerId = CurrentUser.id();
+        String identity = CurrentUser.identity();
+        checkRateLimit(identity, RateLimiterService.Endpoint.DOCUMENT);
         checkUsageBudget(identity);
 
         String projectName = CONTROL_CHARS.matcher(body.projectName()).replaceAll(" ")
@@ -157,9 +168,10 @@ public class AgentController {
 
         int k = Math.min(body.k(), props.maxDocumentK());
 
+        userQuota.reserveDocument(ownerId);
         try {
             Map<String, Object> result = ragService.generateDocument(
-                    projectName, k, body.projectIds(), identity);
+                    projectName, k, body.projectIds(), identity, ownerId);
             @SuppressWarnings("unchecked")
             List<Map<String, String>> chainSteps =
                     (List<Map<String, String>>) result.get("chain_steps");
@@ -168,8 +180,10 @@ public class AgentController {
             return ResponseEntity.ok(new DocumentResponse(
                     (String) result.get("document"), chainSteps, sources));
         } catch (IllegalArgumentException e) {
+            userQuota.refundDocument(ownerId);
             throw new ResponseStatusException(BAD_REQUEST, e.getMessage());
         } catch (RuntimeException e) {
+            userQuota.refundDocument(ownerId);
             log.error("Document generation failed", e);
             throw new ResponseStatusException(INTERNAL_SERVER_ERROR,
                     "Document generation failed.");
@@ -178,16 +192,14 @@ public class AgentController {
 
     @GetMapping("/projects")
     public ResponseEntity<List<ProjectInfo>> listProjects() {
-        return ResponseEntity.ok(ragService.listProjects());
+        return ResponseEntity.ok(ragService.listProjects(CurrentUser.id()));
     }
 
     @DeleteMapping("/projects/{projectId}")
-    public ResponseEntity<Map<String, String>> deleteProject(
-            @PathVariable String projectId,
-            HttpServletRequest httpReq) {
-
-        checkRateLimit(httpReq, RateLimiterService.Endpoint.INGEST);
-        boolean removed = ragService.deleteProject(projectId);
+    public ResponseEntity<Map<String, String>> deleteProject(@PathVariable String projectId) {
+        long ownerId = CurrentUser.id();
+        checkRateLimit(CurrentUser.identity(), RateLimiterService.Endpoint.INGEST);
+        boolean removed = ragService.deleteProject(projectId, ownerId);
         if (!removed) {
             throw new ResponseStatusException(NOT_FOUND,
                     "Project '" + projectId + "' not found.");
@@ -197,13 +209,11 @@ public class AgentController {
     }
 
     @GetMapping("/projects/{projectId}/status")
-    public ResponseEntity<StatusResponse> projectStatus(
-            @PathVariable String projectId,
-            HttpServletRequest httpReq) {
+    public ResponseEntity<StatusResponse> projectStatus(@PathVariable String projectId) {
+        long ownerId = CurrentUser.id();
+        checkRateLimit(CurrentUser.identity(), RateLimiterService.Endpoint.QUERY);
 
-        checkRateLimit(httpReq, RateLimiterService.Endpoint.QUERY);
-
-        var info = registry.findById(projectId)
+        var info = registry.findByIdForOwner(projectId, ownerId)
                 .orElseThrow(() -> new ResponseStatusException(NOT_FOUND,
                         "Project '" + projectId + "' not found."));
 
@@ -234,13 +244,13 @@ public class AgentController {
     }
 
     @PostMapping("/projects/{projectId}/refresh")
-    public ResponseEntity<Map<String, Object>> refreshProject(
-            @PathVariable String projectId,
-            HttpServletRequest httpReq) {
+    public ResponseEntity<Map<String, Object>> refreshProject(@PathVariable String projectId) {
+        long ownerId = CurrentUser.id();
+        String identity = CurrentUser.identity();
+        checkRateLimit(identity, RateLimiterService.Endpoint.INGEST);
+        checkUsageBudget(identity);
 
-        checkRateLimit(httpReq, RateLimiterService.Endpoint.INGEST);
-
-        var info = registry.findById(projectId)
+        var info = registry.findByIdForOwner(projectId, ownerId)
                 .orElseThrow(() -> new ResponseStatusException(NOT_FOUND,
                         "Project '" + projectId + "' not found."));
 
@@ -262,7 +272,7 @@ public class AgentController {
         }
 
         try {
-            Map<String, Object> result = ragService.ingestRepo(info.repoUrl());
+            Map<String, Object> result = ragService.ingestRepo(info.repoUrl(), identity, ownerId);
             gitHub.invalidateStatus(info.repoUrl());
             return ResponseEntity.ok(Map.of(
                     "refreshed",      true,
@@ -281,8 +291,8 @@ public class AgentController {
         }
     }
 
-    private void checkRateLimit(HttpServletRequest req, RateLimiterService.Endpoint endpoint) {
-        if (!rateLimiter.isAllowed(getClientIp(req), endpoint)) {
+    private void checkRateLimit(String identity, RateLimiterService.Endpoint endpoint) {
+        if (!rateLimiter.isAllowed(identity, endpoint)) {
             throw new ResponseStatusException(TOO_MANY_REQUESTS,
                     "Rate limit exceeded. Please try again later.");
         }
@@ -294,20 +304,4 @@ public class AgentController {
                     "Daily OpenAI usage budget exceeded. Please try again tomorrow.");
         }
     }
-
-    private static String getClientIp(HttpServletRequest req) {
-        String forwarded = req.getHeader("X-Forwarded-For");
-        if (isTrustedProxy(req.getRemoteAddr()) && forwarded != null && !forwarded.isBlank()) {
-            return forwarded.split(",")[0].strip();
-        }
-        return req.getRemoteAddr();
-    }
-
-    private static boolean isTrustedProxy(String remoteAddr) {
-        return "127.0.0.1".equals(remoteAddr)
-                || "0:0:0:0:0:0:0:1".equals(remoteAddr)
-                || "::1".equals(remoteAddr);
-    }
 }
-
-

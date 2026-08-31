@@ -756,3 +756,92 @@ textarea {
     white-space: normal;
   }
 }
+
+/* ── Auth ─────────────────────────────────────────────────────────────────── */
+.topbar-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.account-chip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.account-chip span {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.auth-shell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+}
+
+.auth-card {
+  width: min(420px, 100%);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 34px 30px;
+}
+
+.auth-card h1 {
+  font-size: 1.7rem;
+  margin: 10px 0 8px;
+}
+
+.auth-card > p {
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.auth-form label {
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-top: 8px;
+}
+
+.auth-form input {
+  background: var(--panel2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 11px 12px;
+}
+
+.auth-form .primary-button {
+  margin-top: 16px;
+}
+
+.auth-form .notice {
+  margin: 6px 0 0;
+}
+
+.auth-switch {
+  margin-top: 16px;
+}
+
+.quota-copy {
+  margin: 10px 0 0;
+  font-size: 0.82rem;
+  color: var(--muted);
+}

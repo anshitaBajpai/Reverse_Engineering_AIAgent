@@ -9,5 +9,7 @@ public record ProjectInfo(
         Instant ingestedAt,
         String lastCommitSha,
         int filesLoaded,
-        int chunksCreated
+        int chunksCreated,
+        /** Owning user id. {@code null} = shared / MCP-originated (no REST owner). */
+        Long ownerId
 ) {}

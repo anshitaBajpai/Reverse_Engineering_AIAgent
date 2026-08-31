@@ -11,32 +11,18 @@ import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.filter.OncePerRequestFilter;
-import org.springframework.web.servlet.config.annotation.CorsRegistry;
-import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
 import java.io.IOException;
 import java.util.UUID;
 
+/**
+ * Request-scoped servlet filters (request id / MDC, body-size cap, security
+ * headers). CORS is configured in {@code security.SecurityConfig}.
+ */
 @Configuration
-public class WebConfig implements WebMvcConfigurer {
+public class WebConfig {
 
     private static final Logger requestLog = LoggerFactory.getLogger("http.request");
-
-    private final AppProperties props;
-
-    public WebConfig(AppProperties props) {
-        this.props = props;
-    }
-
-    @Override
-    public void addCorsMappings(CorsRegistry registry) {
-        String[] origins = props.allowedOrigins().toArray(String[]::new);
-        registry.addMapping("/**")
-                .allowedOrigins(origins)
-                .allowedMethods("GET", "POST", "DELETE", "OPTIONS")
-                .allowedHeaders("Content-Type")
-                .allowCredentials(false);
-    }
 
     @Bean
     public FilterRegistrationBean<OncePerRequestFilter> requestLoggingFilter() {

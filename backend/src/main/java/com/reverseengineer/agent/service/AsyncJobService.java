@@ -8,6 +8,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.Instant;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -23,18 +24,27 @@ public class AsyncJobService {
 
     private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
     private final Map<String, AsyncJobInfo> jobs = new ConcurrentHashMap<>();
+    /** jobId -> id of the user who submitted it, so status reads stay owner-scoped. */
+    private final Map<String, Long> jobOwners = new ConcurrentHashMap<>();
 
-    public AsyncJobInfo submit(String type, Supplier<Object> task) {
+    public AsyncJobInfo submit(String type, Long ownerId, Supplier<Object> task) {
         String jobId = UUID.randomUUID().toString();
         Instant now = Instant.now();
         AsyncJobInfo pending = new AsyncJobInfo(jobId, type, "PENDING", now, now, null, null);
         jobs.put(jobId, pending);
+        if (ownerId != null) {
+            jobOwners.put(jobId, ownerId);
+        }
 
         CompletableFuture.runAsync(() -> runJob(jobId, type, task), executor);
         return pending;
     }
 
-    public Optional<AsyncJobInfo> findById(String jobId) {
+    /** Returns the job only when it was submitted by {@code ownerId}; empty otherwise (or if unknown). */
+    public Optional<AsyncJobInfo> findByIdForOwner(String jobId, Long ownerId) {
+        if (!Objects.equals(jobOwners.get(jobId), ownerId)) {
+            return Optional.empty();
+        }
         return Optional.ofNullable(jobs.get(jobId));
     }
 

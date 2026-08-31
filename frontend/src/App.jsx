@@ -3,7 +3,14 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
   API_BASE_URL,
+  AUTH_EVENT,
+  fetchMe,
+  getStoredUser,
+  getToken,
   ingestRepositoryAsync,
+  login,
+  logout,
+  register,
   requestJson,
 } from "./apiClient.js";
 
@@ -240,6 +247,38 @@ function App() {
   const [resultTab, setResultTab] = useState("main");
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const projectPickerRef = useRef(null);
+  const [authed, setAuthed] = useState(() => Boolean(getToken()));
+  const [authUser, setAuthUser] = useState(() => getStoredUser());
+  const [quota, setQuota] = useState(null);
+
+  useEffect(() => {
+    const onUnauthorized = () => {
+      setAuthed(false);
+      setAuthUser(null);
+      setQuota(null);
+      setProjects([]);
+      setSelectedProjectId("");
+    };
+    window.addEventListener(AUTH_EVENT, onUnauthorized);
+    return () => window.removeEventListener(AUTH_EVENT, onUnauthorized);
+  }, []);
+
+  const refreshQuota = useCallback(() => {
+    fetchMe()
+      .then((me) => setQuota(me?.quota || null))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (authed) refreshQuota();
+  }, [authed, refreshQuota]);
+
+  const queriesExhausted =
+    !!quota && quota.queries_limit > 0 && quota.queries_used >= quota.queries_limit;
+  const documentsExhausted =
+    !!quota &&
+    quota.documents_limit > 0 &&
+    quota.documents_used >= quota.documents_limit;
 
   const isBackendOnline = backendStatus === "online";
   const selectedProject = projects.find(
@@ -294,7 +333,7 @@ function App() {
         const response = await fetch(`${API_BASE_URL}/health`);
         if (!mounted) return;
         setBackendStatus(response.ok ? "online" : "offline");
-        if (response.ok) {
+        if (response.ok && authed) {
           try {
             await loadProjects();
           } catch {
@@ -311,7 +350,7 @@ function App() {
       mounted = false;
       window.clearInterval(intervalId);
     };
-  }, [loadProjects]);
+  }, [loadProjects, authed]);
 
   async function ingestRepository(event) {
     event.preventDefault();
@@ -353,6 +392,11 @@ function App() {
         "error",
         "Ingest and select a project before asking a question.",
       );
+    if (queriesExhausted)
+      return showNotice(
+        "error",
+        "You've used all your questions for today. The limit resets tomorrow.",
+      );
     setBusyAction("ask");
     setNotice(null);
     setDocument(null);
@@ -363,6 +407,7 @@ function App() {
         body: { question, k: 5, project_ids: projectIds },
       });
       setAnswer(result);
+      refreshQuota();
     } catch (error) {
       showNotice("error", error.message);
     } finally {
@@ -376,6 +421,11 @@ function App() {
       return showNotice(
         "error",
         "Ingest and select a project before generating a document.",
+      );
+    if (documentsExhausted)
+      return showNotice(
+        "error",
+        "You've used all your technical documents for today. The limit resets tomorrow.",
       );
     setBusyAction("document");
     setNotice(null);
@@ -392,6 +442,7 @@ function App() {
         },
       });
       setDocument(result);
+      refreshQuota();
     } catch (error) {
       showNotice("error", error.message);
     } finally {
@@ -667,6 +718,19 @@ function App() {
     }
   }
 
+  if (!authed) {
+    return (
+      <AuthView
+        backendStatus={backendStatus}
+        onAuthenticated={(user) => {
+          setAuthUser(user);
+          setAuthed(true);
+          setNotice(null);
+        }}
+      />
+    );
+  }
+
   return (
     <div className="app-shell">
       <main className="workspace">
@@ -679,13 +743,29 @@ function App() {
               generate a technical document.
             </p>
           </div>
-          <div className={`status-pill ${isBackendOnline ? "" : "offline"}`}>
-            <span className="status-dot" />
-            {backendStatus === "checking"
-              ? "Checking backend…"
-              : isBackendOnline
-                ? "Backend ready"
-                : "Backend offline"}
+          <div className="topbar-side">
+            <div className={`status-pill ${isBackendOnline ? "" : "offline"}`}>
+              <span className="status-dot" />
+              {backendStatus === "checking"
+                ? "Checking backend…"
+                : isBackendOnline
+                  ? "Backend ready"
+                  : "Backend offline"}
+            </div>
+            <div className="account-chip">
+              <span title="Signed in">{authUser?.username || "Signed in"}</span>
+              <button
+                type="button"
+                className="text-button"
+                onClick={() => {
+                  logout();
+                  setAuthed(false);
+                  setAuthUser(null);
+                }}
+              >
+                Sign out
+              </button>
+            </div>
           </div>
         </header>
         {notice && (
@@ -847,13 +927,23 @@ function App() {
               onChange={(event) => setQuestion(event.target.value)}
               placeholder="How does authentication work?"
               rows="5"
+              disabled={queriesExhausted}
             />
             <button
               className="primary-button"
-              disabled={!selectedProjectId || busyAction === "ask"}
+              disabled={
+                !selectedProjectId || busyAction === "ask" || queriesExhausted
+              }
             >
               {busyAction === "ask" ? "Finding evidence…" : "Ask agent"}
             </button>
+            {quota && quota.queries_limit > 0 && (
+              <p className="quota-copy">
+                {queriesExhausted
+                  ? "You've used all your questions for today. The limit resets tomorrow."
+                  : `${quota.queries_limit - quota.queries_used} of ${quota.queries_limit} question${quota.queries_limit === 1 ? "" : "s"} left.`}
+              </p>
+            )}
           </form>
           <form className="tool-card" onSubmit={generateDocument}>
             <span className="step-label">03 · Explain</span>
@@ -866,15 +956,27 @@ function App() {
               value={documentName}
               onChange={(event) => setDocumentName(event.target.value)}
               placeholder="Optional document title"
+              disabled={documentsExhausted}
             />
             <button
               className="secondary-button"
-              disabled={!selectedProjectId || busyAction === "document"}
+              disabled={
+                !selectedProjectId ||
+                busyAction === "document" ||
+                documentsExhausted
+              }
             >
               {busyAction === "document"
                 ? "Writing document…"
                 : "Generate document"}
             </button>
+            {quota && quota.documents_limit > 0 && (
+              <p className="quota-copy">
+                {documentsExhausted
+                  ? "You've used all your technical documents for today. The limit resets tomorrow."
+                  : `${quota.documents_limit - quota.documents_used} of ${quota.documents_limit} document${quota.documents_limit === 1 ? "" : "s"} left.`}
+              </p>
+            )}
           </form>
         </section>
         {(answer || document) && (
@@ -945,6 +1047,101 @@ function App() {
               </div>
             )}
           </section>
+        )}
+      </main>
+    </div>
+  );
+}
+
+function AuthView({ onAuthenticated, backendStatus }) {
+  const [mode, setMode] = useState("login");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const isRegister = mode === "register";
+
+  async function submit(event) {
+    event.preventDefault();
+    setError("");
+    if (username.trim().length < 3) {
+      setError("Username must be at least 3 characters.");
+      return;
+    }
+    if (password.length < 8) {
+      setError("Password must be at least 8 characters.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const action = isRegister ? register : login;
+      const { user } = await action(username.trim(), password);
+      onAuthenticated(user);
+    } catch (err) {
+      setError(err.message || "Authentication failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="app-shell auth-shell">
+      <main className="auth-card">
+        <span className="eyebrow">Reverse Engineering AI Agent</span>
+        <h1>{isRegister ? "Create your account" : "Sign in"}</h1>
+        <p>
+          {isRegister
+            ? "Pick a username and password. Your ingested repositories stay private to your account."
+            : "Sign in to ingest repositories and ask questions about them."}
+        </p>
+        <form className="auth-form" onSubmit={submit}>
+          <label htmlFor="auth-username">Username</label>
+          <input
+            id="auth-username"
+            autoComplete="username"
+            value={username}
+            onChange={(event) => setUsername(event.target.value)}
+            placeholder="ada"
+          />
+          <label htmlFor="auth-password">Password</label>
+          <input
+            id="auth-password"
+            type="password"
+            autoComplete={isRegister ? "new-password" : "current-password"}
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            placeholder="At least 8 characters"
+          />
+          {error && (
+            <div className="notice error" role="alert">
+              {error}
+            </div>
+          )}
+          <button className="primary-button" disabled={busy}>
+            {busy
+              ? "Working…"
+              : isRegister
+                ? "Create account"
+                : "Sign in"}
+          </button>
+        </form>
+        <button
+          type="button"
+          className="text-button auth-switch"
+          onClick={() => {
+            setMode(isRegister ? "login" : "register");
+            setError("");
+          }}
+        >
+          {isRegister
+            ? "Already have an account? Sign in"
+            : "New here? Create an account"}
+        </button>
+        {backendStatus === "offline" && (
+          <p className="progress-copy">
+            The backend looks offline — start it and try again.
+          </p>
         )}
       </main>
     </div>

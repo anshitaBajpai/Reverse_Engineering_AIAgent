@@ -85,6 +85,16 @@ public class GlobalExceptionHandler {
                         request.getRequestURI()));
     }
 
+    @ExceptionHandler(QuotaExceededException.class)
+    public ResponseEntity<ApiErrorResponse> handleQuotaExceeded(
+            QuotaExceededException ex,
+            HttpServletRequest request) {
+
+        log.debug("Quota exceeded: {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .body(error(HttpStatus.TOO_MANY_REQUESTS, ex.getMessage(), request));
+    }
+
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<ApiErrorResponse> handleIllegalArgument(
             IllegalArgumentException ex,

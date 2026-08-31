@@ -4,6 +4,7 @@ import com.reverseengineer.agent.model.ProjectInfo;
 import com.reverseengineer.agent.service.GitHubService;
 import com.reverseengineer.agent.service.ProjectRegistry;
 import com.reverseengineer.agent.service.RagService;
+import com.reverseengineer.agent.service.UsageGuardService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.tool.annotation.Tool;
@@ -20,19 +21,33 @@ public class AgentMcpTools {
     private static final Logger log = LoggerFactory.getLogger(AgentMcpTools.class);
 
     // The MCP transport has no per-caller HTTP identity, so all MCP-originated
-    // LLM usage is tracked and budgeted as a single shared identity.
+    // LLM usage is tracked and budgeted as a single shared identity. Projects
+    // ingested here have no REST owner (ownerId = null / "shared").
     private static final String MCP_IDENTITY = "mcp";
+    private static final Long MCP_OWNER = null;
 
     private final RagService ragService;
     private final GitHubService gitHub;
     private final ProjectRegistry registry;
+    private final UsageGuardService usageGuard;
 
     public AgentMcpTools(RagService ragService,
                           GitHubService gitHub,
-                          ProjectRegistry registry) {
+                          ProjectRegistry registry,
+                          UsageGuardService usageGuard) {
         this.ragService = ragService;
         this.gitHub     = gitHub;
         this.registry   = registry;
+        this.usageGuard = usageGuard;
+    }
+
+    /**
+     * The MCP transport has no HTTP layer, so the controller's rate-limit and
+     * budget checks never run for these calls. Enforce at least the shared
+     * OpenAI budget here so an exposed MCP endpoint can't drive unbounded spend.
+     */
+    private boolean budgetExhausted() {
+        return !usageGuard.isWithinBudget(MCP_IDENTITY);
     }
 
     @Tool(description = """
@@ -47,8 +62,11 @@ public class AgentMcpTools {
             String repoUrl) {
 
         log.info("[MCP] ingest_repo: {}", repoUrl);
+        if (budgetExhausted()) {
+            return "Error: the daily OpenAI usage budget has been exhausted. Try again later.";
+        }
         try {
-            Map<String, Object> r = ragService.ingestRepo(repoUrl);
+            Map<String, Object> r = ragService.ingestRepo(repoUrl, MCP_IDENTITY, MCP_OWNER);
             return ("Ingested successfully. project_id=%s  commit=%s  files=%s  chunks=%s")
                     .formatted(r.get("project_id"), r.get("commit_sha"),
                                r.get("files_loaded"), r.get("chunks_created"));
@@ -82,10 +100,13 @@ public class AgentMcpTools {
             String projectIds) {
 
         log.info("[MCP] ask_question");
+        if (budgetExhausted()) {
+            return "Error: the daily OpenAI usage budget has been exhausted. Try again later.";
+        }
         int topK = (k == null || k <= 0) ? 5 : k;
         List<String> ids = parseIds(projectIds);
         try {
-            Map<String, Object> result = ragService.askQuestion(question, topK, ids, MCP_IDENTITY);
+            Map<String, Object> result = ragService.askQuestion(question, topK, ids, MCP_IDENTITY, MCP_OWNER);
             return (String) result.get("answer");
         } catch (Exception e) {
             log.error("[MCP] ask_question failed", e);
@@ -114,12 +135,15 @@ public class AgentMcpTools {
             String projectIds) {
 
         log.info("[MCP] generate_document");
+        if (budgetExhausted()) {
+            return "Error: the daily OpenAI usage budget has been exhausted. Try again later.";
+        }
         String name = (projectName == null || projectName.isBlank())
                 ? "Ingested Repository" : projectName;
         int topK = (k == null || k <= 0) ? 25 : k;
         List<String> ids = parseIds(projectIds);
         try {
-            Map<String, Object> result = ragService.generateDocument(name, topK, ids, MCP_IDENTITY);
+            Map<String, Object> result = ragService.generateDocument(name, topK, ids, MCP_IDENTITY, MCP_OWNER);
             return (String) result.get("document");
         } catch (Exception e) {
             log.error("[MCP] generate_document failed", e);
@@ -133,7 +157,7 @@ public class AgentMcpTools {
             file count, and chunk count for each project.""")
     public String listProjects() {
         log.info("[MCP] list_projects");
-        List<ProjectInfo> projects = ragService.listProjects();
+        List<ProjectInfo> projects = ragService.listProjects(MCP_OWNER);
         if (projects.isEmpty()) {
             return "No projects ingested yet. Call ingest_repo first.";
         }
@@ -157,7 +181,7 @@ public class AgentMcpTools {
             String projectId) {
 
         log.info("[MCP] check_updates: {}", projectId);
-        var infoOpt = registry.findById(projectId);
+        var infoOpt = registry.findByIdForOwner(projectId, MCP_OWNER);
         if (infoOpt.isEmpty()) {
             return "Project '" + projectId
                     + "' not found. Use list_projects to see available projects.";

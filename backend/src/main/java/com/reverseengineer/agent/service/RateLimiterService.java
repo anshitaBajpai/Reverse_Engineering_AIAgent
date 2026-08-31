@@ -2,6 +2,7 @@ package com.reverseengineer.agent.service;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import com.reverseengineer.agent.config.AppProperties;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
@@ -46,11 +47,13 @@ public class RateLimiterService {
     private final StringRedisTemplate redisTemplate;
     private final RedisScript<Long> tokenBucketScript;
     private final boolean redisEnabled;
+    private final boolean redisRequired;
 
     public enum Endpoint {
         INGEST(3, 30_000L),
         QUERY(30, 60_000L),
-        DOCUMENT(5, 60_000L);
+        DOCUMENT(5, 60_000L),
+        AUTH(10, 60_000L);
 
         final int maxRequests;
         final long windowMs;
@@ -63,9 +66,11 @@ public class RateLimiterService {
 
     private final Map<String, Deque<Long>> windows = new ConcurrentHashMap<>();
 
-    public RateLimiterService(ObjectProvider<StringRedisTemplate> redisTemplateProvider) {
+    public RateLimiterService(ObjectProvider<StringRedisTemplate> redisTemplateProvider,
+                              AppProperties props) {
         this.redisTemplate = redisTemplateProvider.getIfAvailable();
         this.redisEnabled = this.redisTemplate != null;
+        this.redisRequired = props.redis().required();
         this.tokenBucketScript = new DefaultRedisScript<>(TOKEN_BUCKET_LUA, Long.class);
     }
 
@@ -74,8 +79,13 @@ public class RateLimiterService {
             try {
                 return isAllowedRedis(ip, endpoint);
             } catch (Exception e) {
-                log.warn("Redis rate limiter unavailable, falling back to in-memory limiter: {}",
-                        e.getMessage());
+                if (redisRequired) {
+                    log.error("Redis rate limiter unavailable while app.redis.required=true — "
+                            + "temporarily using per-instance in-memory limiter: {}", e.getMessage());
+                } else {
+                    log.warn("Redis rate limiter unavailable, falling back to in-memory limiter: {}",
+                            e.getMessage());
+                }
             }
         }
         return isAllowedInMemory(ip, endpoint);

@@ -14,14 +14,16 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * In-memory registry of all successfully ingested projects.
+ * In-memory registry of all successfully ingested projects, mirrored to the
+ * {@code project_registry} table.
  *
- * <p>State is lost on restart but is recovered by
- * {@link RagService#checkExistingData()} which queries the vector store for
- * distinct {@code project_id} metadata values on startup.
+ * <p>Every project has an {@code ownerId}: the id of the user who ingested it,
+ * or {@code null} for shared / MCP-originated projects. All lookups are
+ * owner-scoped so one user never sees another user's repositories.
  *
- * <p>Project IDs are URL-derived slugs containing only {@code [a-z0-9-]},
- * which makes them safe to embed in Spring AI filter expressions.
+ * <p>Project IDs are URL-derived slugs containing only {@code [a-z0-9-]} and,
+ * for owned projects, a {@code u<id>-} prefix. That keeps them globally unique
+ * and safe to embed in Spring AI filter expressions.
  */
 @Service
 public class ProjectRegistry {
@@ -51,21 +53,23 @@ public class ProjectRegistry {
         try {
             jdbcTemplate.update("""
                     INSERT INTO project_registry
-                        (project_id, repo_url, ingested_at, last_commit_sha, files_loaded, chunks_created)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                        (project_id, repo_url, ingested_at, last_commit_sha, files_loaded, chunks_created, owner_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT (project_id) DO UPDATE SET
                         repo_url = EXCLUDED.repo_url,
                         ingested_at = EXCLUDED.ingested_at,
                         last_commit_sha = EXCLUDED.last_commit_sha,
                         files_loaded = EXCLUDED.files_loaded,
-                        chunks_created = EXCLUDED.chunks_created
+                        chunks_created = EXCLUDED.chunks_created,
+                        owner_id = EXCLUDED.owner_id
                     """,
                     info.projectId(),
                     info.repoUrl(),
                     info.ingestedAt() != null ? Timestamp.from(info.ingestedAt()) : null,
                     info.lastCommitSha(),
                     info.filesLoaded(),
-                    info.chunksCreated());
+                    info.chunksCreated(),
+                    info.ownerId());
         } catch (Exception e) {
             log.warn("Could not persist project '{}': {}", info.projectId(), e.getMessage());
         }
@@ -81,8 +85,8 @@ public class ProjectRegistry {
         try {
             jdbcTemplate.update("""
                     INSERT INTO project_registry
-                        (project_id, repo_url, ingested_at, last_commit_sha, files_loaded, chunks_created)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                        (project_id, repo_url, ingested_at, last_commit_sha, files_loaded, chunks_created, owner_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT (project_id) DO UPDATE SET
                         repo_url = EXCLUDED.repo_url
                     """,
@@ -91,18 +95,25 @@ public class ProjectRegistry {
                     info.ingestedAt() != null ? Timestamp.from(info.ingestedAt()) : null,
                     info.lastCommitSha(),
                     info.filesLoaded(),
-                    info.chunksCreated());
+                    info.chunksCreated(),
+                    info.ownerId());
         } catch (Exception e) {
             log.warn("Could not persist recovered project '{}': {}", info.projectId(), e.getMessage());
         }
     }
 
-    public boolean remove(String projectId) {
+    /** Removes the project only if it belongs to {@code ownerId} (or is shared when {@code ownerId} is null). */
+    public boolean remove(String projectId, Long ownerId) {
+        ProjectInfo current = registry.get(projectId);
+        if (current != null && !Objects.equals(current.ownerId(), ownerId)) {
+            return false;
+        }
         boolean removed = registry.remove(projectId) != null;
         try {
             int deleted = jdbcTemplate.update(
-                    "DELETE FROM project_registry WHERE project_id = ?",
-                    projectId);
+                    "DELETE FROM project_registry WHERE project_id = ? "
+                    + "AND owner_id IS NOT DISTINCT FROM ?",
+                    projectId, ownerId);
             removed = removed || deleted > 0;
         } catch (Exception e) {
             log.warn("Could not delete project '{}' from registry table: {}", projectId, e.getMessage());
@@ -110,42 +121,85 @@ public class ProjectRegistry {
         return removed;
     }
 
-    // ── Read ──────────────────────────────────────────────────────────────────
+    // ── Read (owner-scoped) ───────────────────────────────────────────────────
 
-    public Optional<ProjectInfo> findById(String projectId) {
-        return Optional.ofNullable(registry.get(projectId));
+    public Optional<ProjectInfo> findByIdForOwner(String projectId, Long ownerId) {
+        return Optional.ofNullable(registry.get(projectId))
+                .filter(info -> Objects.equals(info.ownerId(), ownerId));
     }
 
-    public List<ProjectInfo> findByIds(List<String> projectIds) {
+    public List<ProjectInfo> findAllForOwner(Long ownerId) {
+        return registry.values().stream()
+                .filter(info -> Objects.equals(info.ownerId(), ownerId))
+                .toList();
+    }
+
+    public List<ProjectInfo> findByIdsForOwner(List<String> projectIds, Long ownerId) {
         if (projectIds == null || projectIds.isEmpty()) {
-            return findAll();
+            return findAllForOwner(ownerId);
         }
         return projectIds.stream()
                 .filter(Objects::nonNull)
                 .distinct()
                 .map(registry::get)
                 .filter(Objects::nonNull)
+                .filter(info -> Objects.equals(info.ownerId(), ownerId))
                 .toList();
     }
 
-    public List<ProjectInfo> findAll() {
-        return List.copyOf(registry.values());
+    public boolean isEmptyForOwner(Long ownerId) {
+        return registry.values().stream()
+                .noneMatch(info -> Objects.equals(info.ownerId(), ownerId));
     }
 
-    public boolean isEmpty() {
-        return registry.isEmpty();
+    /** Total ingested projects across every owner. */
+    public int totalCount() {
+        return registry.size();
     }
+
+    /** Whether any owner has a project with this exact id (used by clone cleanup). */
+    public boolean isKnownProjectId(String projectId) {
+        return projectId != null && registry.containsKey(projectId);
+    }
+
+    // ── ID derivation ────────────────────────────────────────────────────────
+
+    /** Owner-scoped project id: {@code u<ownerId>-<slug>}, or the bare slug for shared/MCP projects. */
+    public static String toProjectId(String repoUrl, Long ownerId) {
+        String slug = slugify(repoUrl);
+        return ownerId != null ? "u" + ownerId + "-" + slug : slug;
+    }
+
+    private static String slugify(String repoUrl) {
+        try {
+            URI uri = URI.create(repoUrl);
+            String path = uri.getHost() + uri.getPath();
+            return path.toLowerCase()
+                    .replaceAll("\\.git$", "")
+                    .replaceAll("[^a-z0-9]+", "-")
+                    .replaceAll("^-+|-+$", "");
+        } catch (Exception e) {
+            return UUID.randomUUID().toString();
+        }
+    }
+
+    // ── Internal ─────────────────────────────────────────────────────────────
 
     private void loadFromDatabase() {
         List<ProjectInfo> projects = jdbcTemplate.query(
-                "SELECT project_id, repo_url, ingested_at, last_commit_sha, files_loaded, chunks_created FROM project_registry",
-                (rs, rowNum) -> new ProjectInfo(
-                        rs.getString("project_id"),
-                        rs.getString("repo_url"),
-                        toInstant(rs.getTimestamp("ingested_at")),
-                        rs.getString("last_commit_sha"),
-                        rs.getInt("files_loaded"),
-                        rs.getInt("chunks_created")));
+                "SELECT project_id, repo_url, ingested_at, last_commit_sha, files_loaded, chunks_created, owner_id "
+                + "FROM project_registry",
+                (rs, rowNum) -> {
+                    long owner = rs.getLong("owner_id");
+                    return new ProjectInfo(
+                            rs.getString("project_id"),
+                            rs.getString("repo_url"),
+                            toInstant(rs.getTimestamp("ingested_at")),
+                            rs.getString("last_commit_sha"),
+                            rs.getInt("files_loaded"),
+                            rs.getInt("chunks_created"),
+                            rs.wasNull() ? null : owner);
+                });
         for (ProjectInfo project : projects) {
             registry.put(project.projectId(), project);
         }
@@ -165,20 +219,7 @@ public class ProjectRegistry {
                 existing.ingestedAt() != null ? existing.ingestedAt() : recovered.ingestedAt(),
                 existing.lastCommitSha() != null ? existing.lastCommitSha() : recovered.lastCommitSha(),
                 existing.filesLoaded() > 0 ? existing.filesLoaded() : recovered.filesLoaded(),
-                existing.chunksCreated() > 0 ? existing.chunksCreated() : recovered.chunksCreated());
-    }
-
-   
-    public static String toProjectId(String repoUrl) {
-        try {
-            URI uri = URI.create(repoUrl);
-            String path = uri.getHost() + uri.getPath();
-            return path.toLowerCase()
-                    .replaceAll("\\.git$", "")
-                    .replaceAll("[^a-z0-9]+", "-")
-                    .replaceAll("^-+|-+$", "");
-        } catch (Exception e) {
-            return UUID.randomUUID().toString();
-        }
+                existing.chunksCreated() > 0 ? existing.chunksCreated() : recovered.chunksCreated(),
+                existing.ownerId() != null ? existing.ownerId() : recovered.ownerId());
     }
 }
