@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import logoUrl from "./Logo.png";
 import {
   API_BASE_URL,
   AUTH_EVENT,
@@ -1098,9 +1099,25 @@ function AuthView({ onAuthenticated, backendStatus }) {
 
   return (
     <div className="app-shell auth-shell">
+      <div className="auth-bg" aria-hidden="true">
+        <div className="auth-bg-aurora" />
+        <div className="auth-bg-beam" />
+        <div className="auth-bg-particles">
+          {Array.from({ length: 20 }).map((_, i) => (
+            <span
+              key={i}
+              style={{
+                left: `${(i * 4.7 + (i % 4) * 3) % 100}%`,
+                animationDuration: `${11 + (i % 6) * 2.4}s`,
+                animationDelay: `${(i * 1.3) % 14}s`,
+              }}
+            />
+          ))}
+        </div>
+      </div>
       <main className="auth-card">
         <div className="auth-brand">
-          <span className="auth-mark" aria-hidden="true">RE</span>
+          <img className="auth-mark" src={logoUrl} alt="" aria-hidden="true" />
           <span className="auth-brand-name">Reverse Engineering AI Agent</span>
         </div>
 
@@ -1196,6 +1213,7 @@ function AuthView({ onAuthenticated, backendStatus }) {
           </p>
         )}
       </main>
+      <p className="auth-footnote">Clone a GitHub repo · chunk it · ask how it works</p>
     </div>
   );
 }
