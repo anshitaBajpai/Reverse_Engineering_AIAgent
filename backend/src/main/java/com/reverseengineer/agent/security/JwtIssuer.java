@@ -24,7 +24,7 @@ public class JwtIssuer {
         this.config = props.auth();
     }
 
-    public String issue(UserAccount user) {
+    public String issue(UserAccount user, String sessionId) {
         Instant now = Instant.now();
         JwtClaimsSet claims = JwtClaimsSet.builder()
                 .issuer(config.jwtIssuer())
@@ -33,6 +33,7 @@ public class JwtIssuer {
                 .subject(Long.toString(user.id()))
                 .claim("username", user.username())
                 .claim("role", user.role() != null ? user.role() : "USER")
+                .claim("sid", sessionId)
                 .build();
         return encoder.encode(JwtEncoderParameters.from(
                         JwsHeader.with(MacAlgorithm.HS256).build(), claims))

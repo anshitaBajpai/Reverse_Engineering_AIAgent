@@ -8,6 +8,7 @@ import com.reverseengineer.agent.security.ClientIp;
 import com.reverseengineer.agent.security.CurrentUser;
 import com.reverseengineer.agent.security.JwtIssuer;
 import com.reverseengineer.agent.service.RateLimiterService;
+import com.reverseengineer.agent.service.SessionRegistry;
 import com.reverseengineer.agent.service.UserAccountService;
 import com.reverseengineer.agent.service.UserQuotaService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -38,15 +39,17 @@ public class AuthController {
     private final JwtIssuer jwtIssuer;
     private final RateLimiterService rateLimiter;
     private final UserQuotaService userQuota;
+    private final SessionRegistry sessions;
     private final AppProperties props;
 
     public AuthController(UserAccountService users, JwtIssuer jwtIssuer,
                          RateLimiterService rateLimiter, UserQuotaService userQuota,
-                         AppProperties props) {
+                         SessionRegistry sessions, AppProperties props) {
         this.users = users;
         this.jwtIssuer = jwtIssuer;
         this.rateLimiter = rateLimiter;
         this.userQuota = userQuota;
+        this.sessions = sessions;
         this.props = props;
     }
 
@@ -84,9 +87,21 @@ public class AuthController {
                 "quota", userQuota.snapshot(id));
     }
 
+    /** Ends this account's active session server-side so its token stops working immediately. */
+    @PostMapping("/logout")
+    public ResponseEntity<Void> logout() {
+        sessions.clear(CurrentUser.id());
+        return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * Issues a token on a fresh session id. Any token from an earlier login for
+     * this user carries the previous id and is rejected on its next request.
+     */
     private AuthResponse token(UserAccount user) {
+        String sessionId = sessions.rotate(user.id());
         return AuthResponse.bearer(
-                jwtIssuer.issue(user), jwtIssuer.ttlSeconds(), user.username(),
+                jwtIssuer.issue(user, sessionId), jwtIssuer.ttlSeconds(), user.username(),
                 user.role() != null ? user.role() : "USER");
     }
 
