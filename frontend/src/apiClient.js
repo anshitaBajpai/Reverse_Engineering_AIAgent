@@ -182,6 +182,12 @@ export async function register(username, password, signupCode) {
 }
 
 export function logout() {
+  // Best-effort server-side session teardown; ignore any failure and clear locally.
+  try {
+    requestJson("/auth/logout", { method: "POST" }).catch(() => {});
+  } catch {
+    // ignore
+  }
   clearSession();
   emitUnauthorized();
 }
