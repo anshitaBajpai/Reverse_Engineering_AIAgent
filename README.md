@@ -8,7 +8,7 @@ Point this tool at any GitHub repository and ask questions about how it works. I
 - **Ask questions** — RAG-backed Q&A over the codebase ("how does authentication work?", "where is the rate limiter?")
 - **Generate a document** — runs a 4-step LLM chain (architecture → behaviour → risk → synthesis) and produces a Markdown report
 - **Check for updates** — compares the ingested commit SHA against the current HEAD on GitHub and re-ingests on demand
-- **MCP server** — optionally exposes the same tools over SSE so Claude Desktop (or any MCP client) can call them directly, no UI needed (can be turned off — see [Configuration](#configuration))
+- **MCP server** — optionally exposes the same tools over SSE so Claude Desktop (or any MCP client) can call them directly, no UI needed.
 
 ## Screenshots
 
