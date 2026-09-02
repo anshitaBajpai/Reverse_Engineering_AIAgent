@@ -275,7 +275,9 @@ function App() {
   }, [authed, refreshQuota]);
 
   const queriesExhausted =
-    !!quota && quota.queries_limit > 0 && quota.queries_used >= quota.queries_limit;
+    !!quota &&
+    quota.queries_limit > 0 &&
+    quota.queries_used >= quota.queries_limit;
   const documentsExhausted =
     !!quota &&
     quota.documents_limit > 0 &&
@@ -753,20 +755,14 @@ function App() {
                   ? "Backend ready"
                   : "Backend offline"}
             </div>
-            <div className="account-chip">
-              <span title="Signed in">{authUser?.username || "Signed in"}</span>
-              <button
-                type="button"
-                className="text-button"
-                onClick={() => {
-                  logout();
-                  setAuthed(false);
-                  setAuthUser(null);
-                }}
-              >
-                Sign out
-              </button>
-            </div>
+            <AccountMenu
+              username={authUser?.username}
+              onSignOut={() => {
+                logout();
+                setAuthed(false);
+                setAuthUser(null);
+              }}
+            />
           </div>
         </header>
         {notice && (
@@ -831,7 +827,11 @@ function App() {
                 <span className="select-trigger-icon" aria-hidden="true" />
               </button>
               {projectPickerOpen && projects.length > 0 && (
-                <div className="select-menu" role="listbox" aria-label="Projects">
+                <div
+                  className="select-menu"
+                  role="listbox"
+                  aria-label="Projects"
+                >
                   {projects.map((project) => {
                     const isActive = project.project_id === selectedProjectId;
                     return (
@@ -853,7 +853,8 @@ function App() {
                           {project.repo_url}
                         </span>
                         <span className="select-option-meta">
-                          {project.files_loaded} files · {project.chunks_created} chunks
+                          {project.files_loaded} files ·{" "}
+                          {project.chunks_created} chunks
                         </span>
                       </button>
                     );
@@ -1121,7 +1122,11 @@ function AuthView({ onAuthenticated, backendStatus }) {
           <span className="auth-brand-name">Reverse Engineering AI Agent</span>
         </div>
 
-        <div className="auth-tabs" role="tablist" aria-label="Authentication mode">
+        <div
+          className="auth-tabs"
+          role="tablist"
+          aria-label="Authentication mode"
+        >
           <button
             type="button"
             role="tab"
@@ -1155,7 +1160,7 @@ function AuthView({ onAuthenticated, backendStatus }) {
               autoComplete="username"
               value={username}
               onChange={(event) => setUsername(event.target.value)}
-              placeholder="ada"
+              placeholder="Sam"
               autoFocus
             />
           </label>
@@ -1168,7 +1173,9 @@ function AuthView({ onAuthenticated, backendStatus }) {
                 autoComplete={isRegister ? "new-password" : "current-password"}
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
-                placeholder={isRegister ? "At least 8 characters" : "Your password"}
+                placeholder={
+                  isRegister ? "At least 8 characters" : "Your password"
+                }
               />
               <button
                 type="button"
@@ -1201,7 +1208,10 @@ function AuthView({ onAuthenticated, backendStatus }) {
             </div>
           )}
 
-          <button className="primary-button auth-submit" disabled={busy || offline}>
+          <button
+            className="primary-button auth-submit"
+            disabled={busy || offline}
+          >
             {busy && <span className="auth-spinner" aria-hidden="true" />}
             {busy ? "Working…" : isRegister ? "Create account" : "Sign in"}
           </button>
@@ -1213,7 +1223,121 @@ function AuthView({ onAuthenticated, backendStatus }) {
           </p>
         )}
       </main>
-      <p className="auth-footnote">Clone a GitHub repo · chunk it · ask how it works</p>
+      <p className="auth-footnote">
+        Clone a GitHub repo · chunk it · ask how it works
+      </p>
+    </div>
+  );
+}
+
+function initialsFrom(name) {
+  const parts = String(name)
+    .split(/[\s._-]+/)
+    .filter(Boolean);
+  if (parts.length >= 2) {
+    return (parts[0][0] + parts[1][0]).toUpperCase();
+  }
+  return (
+    String(name)
+      .replace(/[^a-z0-9]/gi, "")
+      .slice(0, 2)
+      .toUpperCase() || "?"
+  );
+}
+
+function AccountMenu({ username, onSignOut }) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef(null);
+  const name = username || "Account";
+  const displayName = name.charAt(0).toUpperCase() + name.slice(1);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const handlePointer = (event) => {
+      if (rootRef.current && !rootRef.current.contains(event.target)) {
+        setOpen(false);
+      }
+    };
+    const handleKey = (event) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", handlePointer);
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("mousedown", handlePointer);
+      document.removeEventListener("keydown", handleKey);
+    };
+  }, [open]);
+
+  return (
+    <div className="account-menu" ref={rootRef}>
+      <button
+        type="button"
+        className="account-trigger"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={`Account menu for ${displayName}`}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <span className="account-avatar" aria-hidden="true">
+          {initialsFrom(name)}
+        </span>
+        <span className="account-name">{displayName}</span>
+        <svg
+          className="account-caret"
+          width="12"
+          height="12"
+          viewBox="0 0 12 12"
+          aria-hidden="true"
+        >
+          <path
+            d="M2.5 4.5 6 8l3.5-3.5"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.6"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      </button>
+
+      {open && (
+        <div className="account-popover" role="menu">
+          <div className="account-popover-head">
+            <span
+              className="account-avatar account-avatar-lg"
+              aria-hidden="true"
+            >
+              {initialsFrom(name)}
+            </span>
+            <span className="account-popover-meta">
+              <span className="account-popover-label">Signed in as</span>
+              <span className="account-popover-name">{displayName}</span>
+            </span>
+          </div>
+          <button
+            type="button"
+            className="account-menu-item"
+            role="menuitem"
+            onClick={() => {
+              setOpen(false);
+              onSignOut();
+            }}
+          >
+            <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
+              <path
+                d="M6 2H3.6A1.6 1.6 0 0 0 2 3.6v8.8A1.6 1.6 0 0 0 3.6 14H6M10.5 11 14 8l-3.5-3M13.5 8H6"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.4"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+            Sign out
+          </button>
+        </div>
+      )}
     </div>
   );
 }
