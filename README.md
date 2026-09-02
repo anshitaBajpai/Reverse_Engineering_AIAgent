@@ -71,24 +71,6 @@ npm run dev
 
 Open `http://127.0.0.1:5173` in your browser.
 
-## Authentication
-
-The REST API is protected. Create an account, then send the returned token as a
-bearer header on every other call.
-
-```bash
-curl -sX POST localhost:8080/auth/register \
-  -H 'Content-Type: application/json' \
-  -d '{"username":"ada","password":"correct horse battery"}'
-# → { "access_token": "eyJ...", "token_type": "Bearer", "expires_in_seconds": 3600, ... }
-
-curl localhost:8080/projects -H 'Authorization: Bearer eyJ...'
-```
-
-Tokens are HMAC-signed with `JWT_SECRET` and expire after `JWT_TTL_SECONDS`
-(default 1h). Each account only sees the repositories it ingested. The web UI has
-a sign-in screen and keeps the token in `localStorage`.
-
 ## Limits
 
 To keep token spend predictable:
