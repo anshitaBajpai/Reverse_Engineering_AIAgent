@@ -5,6 +5,7 @@ import logoUrl from "./Logo.png";
 import {
   API_BASE_URL,
   AUTH_EVENT,
+  deleteAccount,
   fetchMe,
   getStoredUser,
   getToken,
@@ -762,6 +763,18 @@ function App() {
                 setAuthed(false);
                 setAuthUser(null);
               }}
+              onDeleteAccount={async () => {
+                try {
+                  await deleteAccount();
+                  setAuthed(false);
+                  setAuthUser(null);
+                  setQuota(null);
+                  setProjects([]);
+                  setSelectedProjectId("");
+                } catch (error) {
+                  showNotice("error", error.message);
+                }
+              }}
             />
           </div>
         </header>
@@ -1245,8 +1258,9 @@ function initialsFrom(name) {
   );
 }
 
-function AccountMenu({ username, onSignOut }) {
+function AccountMenu({ username, onSignOut, onDeleteAccount }) {
   const [open, setOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const rootRef = useRef(null);
   const name = username || "Account";
   const displayName = name.charAt(0).toUpperCase() + name.slice(1);
@@ -1335,6 +1349,40 @@ function AccountMenu({ username, onSignOut }) {
               />
             </svg>
             Sign out
+          </button>
+          <button
+            type="button"
+            className="account-menu-item danger"
+            role="menuitem"
+            disabled={deleting}
+            onClick={async () => {
+              if (
+                !window.confirm(
+                  "Delete your account permanently? This also removes every repository you have ingested and cannot be undone.",
+                )
+              ) {
+                return;
+              }
+              setDeleting(true);
+              try {
+                await onDeleteAccount();
+                setOpen(false);
+              } finally {
+                setDeleting(false);
+              }
+            }}
+          >
+            <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
+              <path
+                d="M3 4h10M6.5 4V2.8A.8.8 0 0 1 7.3 2h1.4a.8.8 0 0 1 .8.8V4M12 4l-.6 8.3a1.2 1.2 0 0 1-1.2 1.1H5.8a1.2 1.2 0 0 1-1.2-1.1L4 4M6.7 7v4M9.3 7v4"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.4"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+            {deleting ? "Deleting…" : "Delete account"}
           </button>
         </div>
       )}

@@ -888,6 +888,15 @@ textarea {
   color: var(--danger);
 }
 
+.account-menu-item.danger {
+  color: var(--danger);
+}
+
+.account-menu-item:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
 .auth-shell {
   position: relative;
   display: flex;
