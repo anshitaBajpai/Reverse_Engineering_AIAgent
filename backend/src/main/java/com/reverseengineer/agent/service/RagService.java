@@ -228,6 +228,22 @@ public class RagService {
         return registry.findAllForOwner(ownerId);
     }
 
+    /**
+     * Deletes every project owned by {@code ownerId} — vector-store rows, registry
+     * entries, and on-disk clones. Used when an account is removed.
+     *
+     * @return the number of projects removed
+     */
+    public int deleteAllProjectsForOwner(long ownerId) {
+        int removed = 0;
+        for (ProjectInfo info : registry.findAllForOwner(ownerId)) {
+            if (deleteProject(info.projectId(), ownerId)) {
+                removed++;
+            }
+        }
+        return removed;
+    }
+
     public boolean deleteProject(String projectId, Long ownerId) {
         if (registry.findByIdForOwner(projectId, ownerId).isEmpty()) {
             return false;

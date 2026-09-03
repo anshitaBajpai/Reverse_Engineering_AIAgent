@@ -7,6 +7,7 @@ import com.reverseengineer.agent.model.UserAccount;
 import com.reverseengineer.agent.security.ClientIp;
 import com.reverseengineer.agent.security.CurrentUser;
 import com.reverseengineer.agent.security.JwtIssuer;
+import com.reverseengineer.agent.service.RagService;
 import com.reverseengineer.agent.service.RateLimiterService;
 import com.reverseengineer.agent.service.SessionRegistry;
 import com.reverseengineer.agent.service.UserAccountService;
@@ -20,6 +21,7 @@ import org.springframework.http.ResponseEntity;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -40,16 +42,18 @@ public class AuthController {
     private final RateLimiterService rateLimiter;
     private final UserQuotaService userQuota;
     private final SessionRegistry sessions;
+    private final RagService rag;
     private final AppProperties props;
 
     public AuthController(UserAccountService users, JwtIssuer jwtIssuer,
                          RateLimiterService rateLimiter, UserQuotaService userQuota,
-                         SessionRegistry sessions, AppProperties props) {
+                         SessionRegistry sessions, RagService rag, AppProperties props) {
         this.users = users;
         this.jwtIssuer = jwtIssuer;
         this.rateLimiter = rateLimiter;
         this.userQuota = userQuota;
         this.sessions = sessions;
+        this.rag = rag;
         this.props = props;
     }
 
@@ -91,6 +95,23 @@ public class AuthController {
     @PostMapping("/logout")
     public ResponseEntity<Void> logout() {
         sessions.clear(CurrentUser.id());
+        return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * Permanently deletes the caller's account: every repository they ingested
+     * (vector data, registry rows, on-disk clones), their active session, and the
+     * account row itself. The bearer token is dead as soon as this returns.
+     */
+    @DeleteMapping("/account")
+    public ResponseEntity<Void> deleteAccount(HttpServletRequest httpReq) {
+        rateLimit(httpReq);
+        long id = CurrentUser.id();
+        String username = CurrentUser.username();
+        int projectsRemoved = rag.deleteAllProjectsForOwner(id);
+        sessions.clear(id);
+        users.deleteById(id);
+        log.info("Account deleted: {} (id={}); {} project(s) removed.", username, id, projectsRemoved);
         return ResponseEntity.noContent().build();
     }
 
