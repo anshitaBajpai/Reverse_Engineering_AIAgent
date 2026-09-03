@@ -197,6 +197,16 @@ export async function fetchMe() {
   return requestJson("/auth/me");
 }
 
+/**
+ * Permanently deletes the signed-in account and every repository it ingested,
+ * then clears the local session. The stored token is already dead server-side.
+ */
+export async function deleteAccount() {
+  await requestJson("/auth/account", { method: "DELETE" });
+  clearSession();
+  emitUnauthorized();
+}
+
 function finishAuth(data) {
   const token = data?.access_token;
   if (!token) {
