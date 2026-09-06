@@ -1085,18 +1085,15 @@ function ConfirmModal({
   confirmLabel = "Confirm",
   cancelLabel = "Cancel",
   danger = false,
-  requireText,
   busy = false,
   onConfirm,
   onCancel,
 }) {
-  const [typedText, setTypedText] = useState("");
-  const inputRef = useRef(null);
   const cancelRef = useRef(null);
 
   useEffect(() => {
-    (requireText ? inputRef.current : cancelRef.current)?.focus();
-  }, [requireText]);
+    cancelRef.current?.focus();
+  }, []);
 
   useEffect(() => {
     const handleKey = (event) => {
@@ -1105,8 +1102,6 @@ function ConfirmModal({
     document.addEventListener("keydown", handleKey);
     return () => document.removeEventListener("keydown", handleKey);
   }, [onCancel]);
-
-  const locked = Boolean(requireText) && typedText.trim() !== requireText;
 
   return (
     <div
@@ -1128,21 +1123,6 @@ function ConfirmModal({
           {title}
         </h3>
         <p className="modal-message">{message}</p>
-        {requireText && (
-          <label className="field modal-field">
-            <span className="field-label">
-              Type "{requireText}" to confirm
-            </span>
-            <input
-              ref={inputRef}
-              value={typedText}
-              onChange={(event) => setTypedText(event.target.value)}
-              autoComplete="off"
-              placeholder={requireText}
-              disabled={busy}
-            />
-          </label>
-        )}
         <div className="modal-actions">
           <button
             type="button"
@@ -1157,7 +1137,7 @@ function ConfirmModal({
             type="button"
             className={danger ? "danger-button solid" : "primary-button"}
             onClick={onConfirm}
-            disabled={busy || locked}
+            disabled={busy}
           >
             {confirmLabel}
           </button>
@@ -1479,7 +1459,6 @@ function AccountMenu({ username, onSignOut, onDeleteAccount }) {
           message="This permanently removes your account and every repository you've ingested. This cannot be undone."
           confirmLabel={deleting ? "Deleting…" : "Delete account"}
           danger
-          requireText={name}
           busy={deleting}
           onConfirm={async () => {
             setDeleting(true);

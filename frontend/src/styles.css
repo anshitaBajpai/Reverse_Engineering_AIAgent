@@ -1268,10 +1268,6 @@ textarea {
   margin: 0 0 18px;
 }
 
-.modal-field {
-  margin-bottom: 18px;
-}
-
 .modal-actions {
   display: flex;
   justify-content: flex-end;
