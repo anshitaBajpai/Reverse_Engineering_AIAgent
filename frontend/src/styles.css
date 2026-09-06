@@ -1226,3 +1226,92 @@ textarea {
   font-size: 0.82rem;
   color: var(--muted);
 }
+
+/* ── Confirm modal ────────────────────────────────────────────────────────── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(4, 8, 14, 0.62);
+  backdrop-filter: blur(6px);
+  animation: modal-fade-in 0.15s ease;
+}
+
+.modal-card {
+  width: min(420px, 100%);
+  padding: 24px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: linear-gradient(145deg, rgba(24, 34, 54, 0.98), rgba(10, 17, 29, 0.98));
+  box-shadow: 0 30px 80px -20px rgba(0, 0, 0, 0.6);
+  animation: modal-pop-in 0.18s ease;
+}
+
+.modal-title {
+  margin: 0 0 10px;
+  font-size: 1.15rem;
+  letter-spacing: -0.02em;
+}
+
+.modal-title.danger {
+  color: var(--danger);
+}
+
+.modal-message {
+  color: var(--muted);
+  line-height: 1.6;
+  font-size: 0.92rem;
+  margin: 0 0 18px;
+}
+
+.modal-field {
+  margin-bottom: 18px;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.modal-actions button {
+  width: auto;
+}
+
+.danger-button.solid {
+  color: #2a0d0d;
+  background: linear-gradient(135deg, #ff9a9a, #ff6b6b);
+  border-color: transparent;
+  font-weight: 800;
+}
+
+@keyframes modal-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes modal-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .modal-overlay,
+  .modal-card {
+    animation: none;
+  }
+}
