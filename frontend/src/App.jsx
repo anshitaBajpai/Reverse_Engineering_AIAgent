@@ -252,6 +252,7 @@ function App() {
   const [authed, setAuthed] = useState(() => Boolean(getToken()));
   const [authUser, setAuthUser] = useState(() => getStoredUser());
   const [quota, setQuota] = useState(null);
+  const [confirmingProjectDelete, setConfirmingProjectDelete] = useState(false);
 
   useEffect(() => {
     const onUnauthorized = () => {
@@ -696,14 +697,12 @@ function App() {
     }
   }
 
-  async function deleteProject() {
-    if (
-      !selectedProject ||
-      !window.confirm(
-        `Remove ${selectedProject.repo_url} and its indexed data?`,
-      )
-    )
-      return;
+  function requestDeleteProject() {
+    if (!selectedProject) return;
+    setConfirmingProjectDelete(true);
+  }
+
+  async function performDeleteProject() {
     setBusyAction("delete");
     try {
       const result = await requestJson(
@@ -719,6 +718,7 @@ function App() {
       showNotice("error", error.message);
     } finally {
       setBusyAction("");
+      setConfirmingProjectDelete(false);
     }
   }
 
@@ -894,7 +894,7 @@ function App() {
               {busyAction === "status" ? "Checking…" : "Check updates"}
             </button>
             <button
-              onClick={deleteProject}
+              onClick={requestDeleteProject}
               disabled={!selectedProjectId || busyAction}
               className="danger-button"
             >
@@ -1064,6 +1064,105 @@ function App() {
           </section>
         )}
       </main>
+      {confirmingProjectDelete && selectedProject && (
+        <ConfirmModal
+          title="Remove this project?"
+          message={`This deletes the indexed data for ${selectedProject.repo_url}. Existing answers and documents tied to it will be gone, but you can re-ingest the repository later.`}
+          confirmLabel={busyAction === "delete" ? "Removing…" : "Remove project"}
+          danger
+          busy={busyAction === "delete"}
+          onConfirm={performDeleteProject}
+          onCancel={() => setConfirmingProjectDelete(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+function ConfirmModal({
+  title,
+  message,
+  confirmLabel = "Confirm",
+  cancelLabel = "Cancel",
+  danger = false,
+  requireText,
+  busy = false,
+  onConfirm,
+  onCancel,
+}) {
+  const [typedText, setTypedText] = useState("");
+  const inputRef = useRef(null);
+  const cancelRef = useRef(null);
+
+  useEffect(() => {
+    (requireText ? inputRef.current : cancelRef.current)?.focus();
+  }, [requireText]);
+
+  useEffect(() => {
+    const handleKey = (event) => {
+      if (event.key === "Escape") onCancel();
+    };
+    document.addEventListener("keydown", handleKey);
+    return () => document.removeEventListener("keydown", handleKey);
+  }, [onCancel]);
+
+  const locked = Boolean(requireText) && typedText.trim() !== requireText;
+
+  return (
+    <div
+      className="modal-overlay"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onCancel();
+      }}
+    >
+      <div
+        className="modal-card"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="confirm-modal-title"
+      >
+        <h3
+          id="confirm-modal-title"
+          className={`modal-title ${danger ? "danger" : ""}`}
+        >
+          {title}
+        </h3>
+        <p className="modal-message">{message}</p>
+        {requireText && (
+          <label className="field modal-field">
+            <span className="field-label">
+              Type "{requireText}" to confirm
+            </span>
+            <input
+              ref={inputRef}
+              value={typedText}
+              onChange={(event) => setTypedText(event.target.value)}
+              autoComplete="off"
+              placeholder={requireText}
+              disabled={busy}
+            />
+          </label>
+        )}
+        <div className="modal-actions">
+          <button
+            type="button"
+            ref={cancelRef}
+            className="secondary-button"
+            onClick={onCancel}
+            disabled={busy}
+          >
+            {cancelLabel}
+          </button>
+          <button
+            type="button"
+            className={danger ? "danger-button solid" : "primary-button"}
+            onClick={onConfirm}
+            disabled={busy || locked}
+          >
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1260,6 +1359,7 @@ function initialsFrom(name) {
 
 function AccountMenu({ username, onSignOut, onDeleteAccount }) {
   const [open, setOpen] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const rootRef = useRef(null);
   const name = username || "Account";
@@ -1354,22 +1454,9 @@ function AccountMenu({ username, onSignOut, onDeleteAccount }) {
             type="button"
             className="account-menu-item danger"
             role="menuitem"
-            disabled={deleting}
-            onClick={async () => {
-              if (
-                !window.confirm(
-                  "Delete your account permanently? This also removes every repository you have ingested and cannot be undone.",
-                )
-              ) {
-                return;
-              }
-              setDeleting(true);
-              try {
-                await onDeleteAccount();
-                setOpen(false);
-              } finally {
-                setDeleting(false);
-              }
+            onClick={() => {
+              setOpen(false);
+              setConfirmingDelete(true);
             }}
           >
             <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
@@ -1382,9 +1469,29 @@ function AccountMenu({ username, onSignOut, onDeleteAccount }) {
                 strokeLinejoin="round"
               />
             </svg>
-            {deleting ? "Deleting…" : "Delete account"}
+            Delete account
           </button>
         </div>
+      )}
+      {confirmingDelete && (
+        <ConfirmModal
+          title="Delete your account?"
+          message="This permanently removes your account and every repository you've ingested. This cannot be undone."
+          confirmLabel={deleting ? "Deleting…" : "Delete account"}
+          danger
+          requireText={name}
+          busy={deleting}
+          onConfirm={async () => {
+            setDeleting(true);
+            try {
+              await onDeleteAccount();
+              setConfirmingDelete(false);
+            } finally {
+              setDeleting(false);
+            }
+          }}
+          onCancel={() => setConfirmingDelete(false)}
+        />
       )}
     </div>
   );
