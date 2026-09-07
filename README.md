@@ -12,7 +12,7 @@ Point this tool at any GitHub repository and ask questions about how it works. I
 
 ## Screenshots
 
-![alt text](image.png)
+![alt text](image-1.png)
 
 ## Tech stack
 
