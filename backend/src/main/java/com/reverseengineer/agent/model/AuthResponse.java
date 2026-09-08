@@ -1,17 +1,16 @@
 package com.reverseengineer.agent.model;
 
 /**
- * Response body for {@code POST /auth/register} and {@code POST /auth/login}.
- * Serialized snake_case: {@code access_token}, {@code token_type}, {@code expires_in_seconds}.
+ * Response body for {@code POST /auth/register} and {@code POST /auth/login}. The session
+ * token itself travels only as an httpOnly {@code reagent_token} cookie (see {@code AuthCookie}),
+ * never in this body, so it isn't readable from JavaScript.
  */
 public record AuthResponse(
-        String accessToken,
-        String tokenType,
         long expiresInSeconds,
         String username,
         String role
 ) {
-    public static AuthResponse bearer(String token, long ttlSeconds, String username, String role) {
-        return new AuthResponse(token, "Bearer", ttlSeconds, username, role);
+    public static AuthResponse of(long ttlSeconds, String username, String role) {
+        return new AuthResponse(ttlSeconds, username, role);
     }
 }

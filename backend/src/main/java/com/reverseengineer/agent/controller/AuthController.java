@@ -4,6 +4,7 @@ import com.reverseengineer.agent.config.AppProperties;
 import com.reverseengineer.agent.model.AuthRequest;
 import com.reverseengineer.agent.model.AuthResponse;
 import com.reverseengineer.agent.model.UserAccount;
+import com.reverseengineer.agent.security.AuthCookie;
 import com.reverseengineer.agent.security.ClientIp;
 import com.reverseengineer.agent.security.CurrentUser;
 import com.reverseengineer.agent.security.JwtIssuer;
@@ -16,7 +17,9 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
 
 import java.nio.charset.StandardCharsets;
@@ -69,7 +72,9 @@ public class AuthController {
             throw new ResponseStatusException(HttpStatus.CONFLICT, e.getMessage());
         }
         log.info("New account created: {}", user.username());
-        return ResponseEntity.status(HttpStatus.CREATED).body(token(user));
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .header(HttpHeaders.SET_COOKIE, issueCookie(httpReq, user).toString())
+                .body(response(user));
     }
 
     @PostMapping("/login")
@@ -79,7 +84,9 @@ public class AuthController {
         UserAccount user = users.authenticate(body.username(), body.password())
                 .orElseThrow(() -> new ResponseStatusException(
                         HttpStatus.UNAUTHORIZED, "Invalid username or password."));
-        return ResponseEntity.ok(token(user));
+        return ResponseEntity.ok()
+                .header(HttpHeaders.SET_COOKIE, issueCookie(httpReq, user).toString())
+                .body(response(user));
     }
 
     @GetMapping("/me")
@@ -91,17 +98,19 @@ public class AuthController {
                 "quota", userQuota.snapshot(id));
     }
 
-    /** Ends this account's active session server-side so its token stops working immediately. */
+    /** Ends this account's active session server-side and clears the session cookie. */
     @PostMapping("/logout")
-    public ResponseEntity<Void> logout() {
+    public ResponseEntity<Void> logout(HttpServletRequest httpReq) {
         sessions.clear(CurrentUser.id());
-        return ResponseEntity.noContent().build();
+        return ResponseEntity.noContent()
+                .header(HttpHeaders.SET_COOKIE, AuthCookie.clear(httpReq).toString())
+                .build();
     }
 
     /**
      * Permanently deletes the caller's account: every repository they ingested
      * (vector data, registry rows, on-disk clones), their active session, and the
-     * account row itself. The bearer token is dead as soon as this returns.
+     * account row itself. The session cookie is cleared and dead as soon as this returns.
      */
     @DeleteMapping("/account")
     public ResponseEntity<Void> deleteAccount(HttpServletRequest httpReq) {
@@ -112,17 +121,23 @@ public class AuthController {
         sessions.clear(id);
         users.deleteById(id);
         log.info("Account deleted: {} (id={}); {} project(s) removed.", username, id, projectsRemoved);
-        return ResponseEntity.noContent().build();
+        return ResponseEntity.noContent()
+                .header(HttpHeaders.SET_COOKIE, AuthCookie.clear(httpReq).toString())
+                .build();
     }
 
     /**
-     * Issues a token on a fresh session id. Any token from an earlier login for
+     * Issues a session cookie on a fresh session id. A token from an earlier login for
      * this user carries the previous id and is rejected on its next request.
      */
-    private AuthResponse token(UserAccount user) {
+    private ResponseCookie issueCookie(HttpServletRequest httpReq, UserAccount user) {
         String sessionId = sessions.rotate(user.id());
-        return AuthResponse.bearer(
-                jwtIssuer.issue(user, sessionId), jwtIssuer.ttlSeconds(), user.username(),
+        String jwt = jwtIssuer.issue(user, sessionId);
+        return AuthCookie.issue(httpReq, jwt, jwtIssuer.ttlSeconds());
+    }
+
+    private AuthResponse response(UserAccount user) {
+        return AuthResponse.of(jwtIssuer.ttlSeconds(), user.username(),
                 user.role() != null ? user.role() : "USER");
     }
 
