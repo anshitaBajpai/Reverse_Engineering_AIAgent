@@ -70,10 +70,7 @@ public class SecurityConfig {
 
         http
             .cors(Customizer.withDefaults())
-            // Session travels as a SameSite=Strict cookie (see AuthCookie), which the browser
-            // never attaches to a cross-site request — that's the CSRF defense here instead of
-            // a token. Only safe as long as frontend and backend stay on the same site; a
-            // cross-site deployment would need SameSite=None plus a real CSRF token.
+           
             .csrf(csrf -> csrf.disable())
             .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
