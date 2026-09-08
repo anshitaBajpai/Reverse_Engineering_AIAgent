@@ -3,8 +3,6 @@ package com.reverseengineer.agent.security;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.ResponseCookie;
 
-/**
- 
 public final class AuthCookie {
 
     public static final String NAME = "reagent_token";
