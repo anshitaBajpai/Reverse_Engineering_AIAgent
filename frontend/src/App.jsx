@@ -8,7 +8,6 @@ import {
   deleteAccount,
   fetchMe,
   getStoredUser,
-  getToken,
   ingestRepositoryAsync,
   login,
   logout,
@@ -249,7 +248,10 @@ function App() {
   const [resultTab, setResultTab] = useState("main");
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const projectPickerRef = useRef(null);
-  const [authed, setAuthed] = useState(() => Boolean(getToken()));
+  // The session lives in an httpOnly cookie the JS layer can't read, so this is only an
+  // optimistic guess from the last login to avoid a login-screen flash — refreshQuota()
+  // below verifies it against the server and onUnauthorized rolls it back on a 401.
+  const [authed, setAuthed] = useState(() => Boolean(getStoredUser()));
   const [authUser, setAuthUser] = useState(() => getStoredUser());
   const [quota, setQuota] = useState(null);
   const [confirmingProjectDelete, setConfirmingProjectDelete] = useState(false);
@@ -1288,9 +1290,6 @@ function AuthView({ onAuthenticated, backendStatus }) {
                 onChange={(event) => setSignupCode(event.target.value)}
                 placeholder="Provided by the site owner"
               />
-              <span className="field-hint">
-                Only needed if the owner has enabled invite-only signup.
-              </span>
             </label>
           )}
 

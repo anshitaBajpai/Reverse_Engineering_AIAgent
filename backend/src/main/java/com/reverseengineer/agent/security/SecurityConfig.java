@@ -59,6 +59,7 @@ public class SecurityConfig {
     @Bean
     SecurityFilterChain securityFilterChain(HttpSecurity http,
                                             JwtAuthenticationConverter jwtAuthConverter,
+                                            CookieBearerTokenResolver bearerTokenResolver,
                                             ObjectMapper objectMapper) throws Exception {
         AuthenticationEntryPoint entryPoint = (req, res, ex) ->
                 writeError(res, objectMapper, HttpStatus.UNAUTHORIZED,
@@ -69,6 +70,10 @@ public class SecurityConfig {
 
         http
             .cors(Customizer.withDefaults())
+            // Session travels as a SameSite=Strict cookie (see AuthCookie), which the browser
+            // never attaches to a cross-site request — that's the CSRF defense here instead of
+            // a token. Only safe as long as frontend and backend stay on the same site; a
+            // cross-site deployment would need SameSite=None plus a real CSRF token.
             .csrf(csrf -> csrf.disable())
             .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
@@ -77,6 +82,7 @@ public class SecurityConfig {
             .oauth2ResourceServer(oauth2 -> oauth2
                     .authenticationEntryPoint(entryPoint)
                     .accessDeniedHandler(deniedHandler)
+                    .bearerTokenResolver(bearerTokenResolver)
                     .jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthConverter)))
             .exceptionHandling(ex -> ex
                     .authenticationEntryPoint(entryPoint)
@@ -126,7 +132,9 @@ public class SecurityConfig {
         cfg.setAllowedMethods(List.of("GET", "POST", "DELETE", "OPTIONS"));
         cfg.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Request-Id"));
         cfg.setExposedHeaders(List.of("X-Request-Id"));
-        cfg.setAllowCredentials(false);
+        // Needed so the browser sends/accepts the httpOnly session cookie cross-origin
+        // (frontend and backend run on different ports even in local dev).
+        cfg.setAllowCredentials(true);
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", cfg);
         return source;

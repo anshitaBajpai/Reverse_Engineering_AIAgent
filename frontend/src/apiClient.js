@@ -5,10 +5,9 @@ export const REQUEST_TIMEOUT_MS = 300000;
 export const INGEST_POLL_INTERVAL_MS = 2000;
 export const INGEST_JOB_TIMEOUT_MS = REQUEST_TIMEOUT_MS;
 
-const TOKEN_KEY = "reagent.token";
 const USER_KEY = "reagent.user";
 
-/** Dispatched on `window` whenever the stored token is missing or rejected (401). */
+/** Dispatched on `window` whenever the session is missing or rejected (401). */
 export const AUTH_EVENT = "reagent:unauthorized";
 
 function safeStorage() {
@@ -19,14 +18,11 @@ function safeStorage() {
   }
 }
 
-export function getToken() {
-  try {
-    return safeStorage()?.getItem(TOKEN_KEY) || null;
-  } catch {
-    return null;
-  }
-}
-
+/**
+ * Cached username/role from the last successful login, used only to avoid a
+ * login-screen flash while the real session — an httpOnly cookie the JS layer
+ * can't read — is verified against the server. Never treat this as proof of auth.
+ */
 export function getStoredUser() {
   try {
     const raw = safeStorage()?.getItem(USER_KEY);
@@ -36,22 +32,18 @@ export function getStoredUser() {
   }
 }
 
-function setSession(token, user) {
+function setStoredUser(user) {
   try {
     const store = safeStorage();
-    if (!store) return;
-    if (token) store.setItem(TOKEN_KEY, token);
-    if (user) store.setItem(USER_KEY, JSON.stringify(user));
+    if (store && user) store.setItem(USER_KEY, JSON.stringify(user));
   } catch {
-    // storage unavailable — session lives only for this page load
+    // storage unavailable — cached hint lives only for this page load
   }
 }
 
 export function clearSession() {
   try {
-    const store = safeStorage();
-    store?.removeItem(TOKEN_KEY);
-    store?.removeItem(USER_KEY);
+    safeStorage()?.removeItem(USER_KEY);
   } catch {
     // ignore
   }
@@ -101,11 +93,9 @@ export async function requestJson(path, options = {}) {
     fetchImpl = fetch,
     baseUrl = API_BASE_URL,
     auth = true,
-    token = getToken(),
     ...fetchOptions
   } = options;
   const normalizedBody = prepareJsonBody(fetchOptions.body);
-  const authHeaders = auth && token ? { Authorization: `Bearer ${token}` } : {};
   const controller = new AbortController();
   const abortRequest = () => controller.abort();
   if (signal?.aborted) controller.abort();
@@ -114,9 +104,11 @@ export async function requestJson(path, options = {}) {
   let response;
   try {
     response = await fetchImpl(`${baseUrl}${path}`, {
+      // The session lives in an httpOnly cookie; fetch only attaches it
+      // cross-origin (frontend/backend run on different ports) when asked.
+      credentials: "include",
       headers: {
         "Content-Type": "application/json",
-        ...authHeaders,
         ...headers,
       },
       ...fetchOptions,
@@ -199,7 +191,7 @@ export async function fetchMe() {
 
 /**
  * Permanently deletes the signed-in account and every repository it ingested,
- * then clears the local session. The stored token is already dead server-side.
+ * then clears the local session. The session cookie is already dead server-side.
  */
 export async function deleteAccount() {
   await requestJson("/auth/account", { method: "DELETE" });
@@ -208,13 +200,9 @@ export async function deleteAccount() {
 }
 
 function finishAuth(data) {
-  const token = data?.access_token;
-  if (!token) {
-    throw new Error("The server did not return an access token.");
-  }
-  const user = { username: data.username, role: data.role };
-  setSession(token, user);
-  return { token, user, expiresInSeconds: data.expires_in_seconds };
+  const user = { username: data?.username, role: data?.role };
+  setStoredUser(user);
+  return { user, expiresInSeconds: data?.expires_in_seconds };
 }
 
 export async function ingestRepositoryAsync(repoUrl, options = {}) {
