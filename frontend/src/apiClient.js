@@ -49,6 +49,16 @@ export function clearSession() {
   }
 }
 
+/** Reads the JS-visible XSRF-TOKEN cookie the backend sets alongside the httpOnly session cookie. */
+function getCsrfToken() {
+  try {
+    const match = document.cookie.match(/(?:^|;\s*)XSRF-TOKEN=([^;]*)/);
+    return match ? decodeURIComponent(match[1]) : null;
+  } catch {
+    return null;
+  }
+}
+
 function emitUnauthorized() {
   try {
     window.dispatchEvent(new CustomEvent(AUTH_EVENT));
@@ -96,6 +106,8 @@ export async function requestJson(path, options = {}) {
     ...fetchOptions
   } = options;
   const normalizedBody = prepareJsonBody(fetchOptions.body);
+  const method = (fetchOptions.method || "GET").toUpperCase();
+  const csrfToken = method !== "GET" && method !== "HEAD" ? getCsrfToken() : null;
   const controller = new AbortController();
   const abortRequest = () => controller.abort();
   if (signal?.aborted) controller.abort();
@@ -109,6 +121,9 @@ export async function requestJson(path, options = {}) {
       credentials: "include",
       headers: {
         "Content-Type": "application/json",
+        // Double-submit CSRF token, required by the backend on state-changing
+        // requests; absent on GET/HEAD and before the cookie is first set.
+        ...(csrfToken ? { "X-XSRF-TOKEN": csrfToken } : {}),
         ...headers,
       },
       ...fetchOptions,

@@ -28,6 +28,8 @@ import org.springframework.security.oauth2.server.resource.authentication.JwtAut
 import org.springframework.security.web.AuthenticationEntryPoint;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.access.AccessDeniedHandler;
+import org.springframework.security.web.csrf.CsrfFilter;
+import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
@@ -46,6 +48,17 @@ public class SecurityConfig {
     /** Paths reachable without a bearer token. MCP ({@code /sse}, {@code /message}) stays open by design. */
     private static final String[] PUBLIC_PATHS = {
             "/", "/health", "/error",
+            "/auth/register", "/auth/login",
+            "/sse/**", "/mcp/**", "/message/**"
+    };
+
+    /**
+     * Endpoints exempt from the CSRF check: login/register happen before the browser has ever
+     * seen the {@code XSRF-TOKEN} cookie, and the MCP paths are hit by non-browser clients that
+     * never carry the cookie/header pair in the first place. Everything else that mutates state
+     * relies on the httpOnly session cookie and must present a matching CSRF token.
+     */
+    private static final String[] CSRF_EXEMPT_PATHS = {
             "/auth/register", "/auth/login",
             "/sse/**", "/mcp/**", "/message/**"
     };
@@ -70,8 +83,11 @@ public class SecurityConfig {
 
         http
             .cors(Customizer.withDefaults())
-           
-            .csrf(csrf -> csrf.disable())
+            .csrf(csrf -> csrf
+                    .csrfTokenRepository(new CsrfCookieRepository())
+                    .csrfTokenRequestHandler(new CsrfTokenRequestAttributeHandler())
+                    .ignoringRequestMatchers(CSRF_EXEMPT_PATHS))
+            .addFilterAfter(new CsrfCookieFilter(), CsrfFilter.class)
             .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
                     .requestMatchers(PUBLIC_PATHS).permitAll()
@@ -127,7 +143,7 @@ public class SecurityConfig {
         CorsConfiguration cfg = new CorsConfiguration();
         cfg.setAllowedOrigins(props.allowedOrigins());
         cfg.setAllowedMethods(List.of("GET", "POST", "DELETE", "OPTIONS"));
-        cfg.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Request-Id"));
+        cfg.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Request-Id", CsrfCookieRepository.HEADER_NAME));
         cfg.setExposedHeaders(List.of("X-Request-Id"));
         // Needed so the browser sends/accepts the httpOnly session cookie cross-origin
         // (frontend and backend run on different ports even in local dev).
