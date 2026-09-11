@@ -742,7 +742,10 @@ function App() {
       <main className="workspace">
         <header className="topbar">
           <div className="hero-copy">
-            <span className="eyebrow">Reverse Engineering AI Agent</span>
+            <span className="brand-row">
+              <img className="brand-mark" src={logoUrl} alt="" aria-hidden="true" />
+              <span className="eyebrow">Reverse Engineering AI Agent</span>
+            </span>
             <h1>Understand any codebase.</h1>
             <p>
               Ingest a repository, explore it with grounded answers, and
