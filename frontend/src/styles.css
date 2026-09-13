@@ -605,6 +605,40 @@ textarea {
   font-family: Consolas, monospace;
 }
 
+.mermaid-diagram {
+  display: flex;
+  justify-content: center;
+  overflow: auto;
+  margin: 14px 0;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.mermaid-diagram svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.mermaid-error {
+  margin: 14px 0;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: rgba(255, 170, 170, 0.06);
+}
+
+.mermaid-error p {
+  margin: 0 0 8px;
+  color: var(--danger);
+  font-size: 0.9rem;
+}
+
+.mermaid-error pre {
+  margin: 0;
+}
+
 .markdown-table-wrap {
   overflow: auto;
   margin: 12px 0;
