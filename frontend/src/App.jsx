@@ -585,9 +585,9 @@ function App() {
     }
 
     const { jsPDF } = await import("jspdf");
-    const title = escapeFilename(
-      documentName || selectedProject?.repo_url || "Technical Document",
-    );
+    const displayTitle =
+      documentName || selectedProject?.repo_url || "Technical Document";
+    const title = escapeFilename(displayTitle);
     const doc = new jsPDF({ unit: "pt", format: "a4" });
     const pageWidth = doc.internal.pageSize.getWidth();
     const pageHeight = doc.internal.pageSize.getHeight();
@@ -595,12 +595,27 @@ function App() {
     const maxWidth = pageWidth - margin * 2;
     const lineHeight = 14;
     const paragraphGap = 8;
+    const BRAND = [124, 140, 255];
+    const BRAND2 = [90, 215, 255];
+    const INK = [17, 24, 39];
+    const MUTED = [107, 114, 128];
     let cursorY = margin;
     let pageNumber = 1;
+
+    const drawPageChrome = () => {
+      doc.setFillColor(...BRAND2);
+      doc.rect(0, 0, pageWidth, 4, "F");
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+      doc.setTextColor(...MUTED);
+      doc.text(displayTitle, margin, 22);
+    };
+    drawPageChrome();
 
     const ensureSpace = (needed = lineHeight) => {
       if (cursorY + needed > pageHeight - margin) {
         doc.addPage();
+        drawPageChrome();
         cursorY = margin;
         pageNumber += 1;
       }
@@ -609,11 +624,13 @@ function App() {
     const writeWrapped = (text, fontSize = 11, options = {}) => {
       doc.setFont("helvetica", options.bold ? "bold" : "normal");
       doc.setFontSize(fontSize);
+      doc.setTextColor(...(options.color || INK));
       const lines = doc.splitTextToSize(String(text), maxWidth);
       ensureSpace(lines.length * lineHeight);
       lines.forEach((line) => {
         if (cursorY > pageHeight - margin) {
           doc.addPage();
+          drawPageChrome();
           cursorY = margin;
           pageNumber += 1;
         }
@@ -637,15 +654,27 @@ function App() {
 
     blocks.forEach((block) => {
       if (block.type === "heading") {
-        const sizeByLevel = { 1: 15, 2: 13, 3: 12 };
+        const sizeByLevel = { 1: 16, 2: 13, 3: 12 };
+        const afterGap = block.level === 1 ? 9 : 5;
         writeWrapped(
           stripMarkdownMarkers(block.text),
           sizeByLevel[block.level] || 12,
           {
             bold: true,
-            afterGap: 5,
+            color: BRAND,
+            afterGap,
           },
         );
+        if (block.level === 1) {
+          doc.setDrawColor(...BRAND2);
+          doc.setLineWidth(1.2);
+          doc.line(
+            margin,
+            cursorY - afterGap + 3,
+            pageWidth - margin,
+            cursorY - afterGap + 3,
+          );
+        }
         return;
       }
 
@@ -696,22 +725,26 @@ function App() {
             padY * 2;
           ensureSpace(rowHeight + 4);
 
-          doc.setFillColor(
-            rowIndex === 0 ? 233 : 248,
-            rowIndex === 0 ? 237 : 249,
-            rowIndex === 0 ? 241 : 250,
-          );
+          if (rowIndex === 0) {
+            doc.setFillColor(...BRAND);
+          } else if (rowIndex % 2 === 0) {
+            doc.setFillColor(236, 239, 255);
+          } else {
+            doc.setFillColor(255, 255, 255);
+          }
           doc.rect(startX, cursorY - 11, usableWidth, rowHeight, "F");
           doc.setDrawColor(210, 214, 219);
           doc.rect(startX, cursorY - 11, usableWidth, rowHeight);
 
           let cellX = startX;
+          const textColor = rowIndex === 0 ? [255, 255, 255] : INK;
           row.forEach((cell, cellIndex) => {
             if (cellIndex > 0) {
               doc.line(cellX, cursorY - 11, cellX, cursorY - 11 + rowHeight);
             }
             doc.setFont("helvetica", rowIndex === 0 ? "bold" : "normal");
             doc.setFontSize(10);
+            doc.setTextColor(...textColor);
             const lines = cellLines[cellIndex];
             lines.forEach((line, lineIndex) => {
               doc.text(
@@ -750,6 +783,7 @@ function App() {
         ensureSpace(28);
         doc.setFont("courier", "normal");
         doc.setFontSize(10);
+        doc.setTextColor(...INK);
         const codeLines = block.text.split(/\r?\n/);
         codeLines.forEach((codeLine) => {
           const wrapped = doc.splitTextToSize(codeLine || " ", maxWidth - 12);
@@ -766,9 +800,13 @@ function App() {
     const totalPages = doc.internal.getNumberOfPages();
     for (let page = 1; page <= totalPages; page += 1) {
       doc.setPage(page);
+      doc.setDrawColor(...BRAND2);
+      doc.setLineWidth(0.75);
+      doc.line(margin, pageHeight - 30, pageWidth - margin, pageHeight - 30);
       doc.setFont("helvetica", "normal");
       doc.setFontSize(9);
-      doc.setTextColor(107, 114, 128);
+      doc.setTextColor(...MUTED);
+      doc.text(displayTitle, margin, pageHeight - 18);
       doc.text(
         `Page ${page} of ${totalPages}`,
         pageWidth - margin,
