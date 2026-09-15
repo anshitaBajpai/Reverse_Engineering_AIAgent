@@ -263,24 +263,41 @@ public class LlmService {
         return Map.of("document", document, "chain_steps", chainSteps);
     }
 
+    /** Rough chars-per-token heuristic used only to size the pre-call reservation. */
+    private static final int CHARS_PER_TOKEN_ESTIMATE = 4;
+
     private String chatCompletion(String systemPrompt, String userPrompt,
                                    double temperature, int maxTokens, String identity) {
+        // Reserve worst-case spend (estimated prompt size + the completion cap) atomically
+        // before calling OpenAI, so concurrent/chained calls can't all pass a stale budget
+        // check and blow past it before any of them records real usage. See reserve()/adjust().
+        long estimatedPromptTokens = Math.ceilDiv(
+                (long) systemPrompt.length() + userPrompt.length(), CHARS_PER_TOKEN_ESTIMATE);
+        long estimatedTokens = estimatedPromptTokens + maxTokens;
+        usageGuard.reserve(identity, estimatedTokens);
+
         var options = OpenAiChatOptions.builder()
                 .temperature(temperature)
                 .maxTokens(maxTokens)
                 .build();
 
-        ChatResponse response = chatClient.prompt()
-                .options(options)
-                .system(systemPrompt)
-                .user(userPrompt)
-                .call()
-                .chatResponse();
+        ChatResponse response;
+        try {
+            response = chatClient.prompt()
+                    .options(options)
+                    .system(systemPrompt)
+                    .user(userPrompt)
+                    .call()
+                    .chatResponse();
+        } catch (RuntimeException e) {
+            usageGuard.adjust(identity, -estimatedTokens);
+            throw e;
+        }
 
         Usage usage = response.getMetadata().getUsage();
-        usageGuard.recordUsage(identity,
-                usage.getPromptTokens() != null ? usage.getPromptTokens() : 0,
-                usage.getCompletionTokens() != null ? usage.getCompletionTokens() : 0);
+        long actualTokens = (usage.getPromptTokens() != null ? usage.getPromptTokens() : 0)
+                + (usage.getCompletionTokens() != null ? usage.getCompletionTokens() : 0);
+        usageGuard.adjust(identity, actualTokens - estimatedTokens);
 
         return response.getResult().getOutput().getText();
     }
