@@ -95,6 +95,16 @@ public class GlobalExceptionHandler {
                 .body(error(HttpStatus.TOO_MANY_REQUESTS, ex.getMessage(), request));
     }
 
+    @ExceptionHandler(UsageBudgetExceededException.class)
+    public ResponseEntity<ApiErrorResponse> handleUsageBudgetExceeded(
+            UsageBudgetExceededException ex,
+            HttpServletRequest request) {
+
+        log.debug("Usage budget exceeded: {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .body(error(HttpStatus.TOO_MANY_REQUESTS, ex.getMessage(), request));
+    }
+
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<ApiErrorResponse> handleIllegalArgument(
             IllegalArgumentException ex,

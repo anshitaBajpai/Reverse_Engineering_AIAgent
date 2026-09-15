@@ -1,6 +1,7 @@
 package com.reverseengineer.agent.controller;
 
 import com.reverseengineer.agent.config.AppProperties;
+import com.reverseengineer.agent.exception.UsageBudgetExceededException;
 import com.reverseengineer.agent.model.*;
 import com.reverseengineer.agent.security.CurrentUser;
 import com.reverseengineer.agent.service.*;
@@ -142,6 +143,9 @@ public class AgentController {
         } catch (IllegalArgumentException e) {
             userQuota.refundQuery(ownerId);
             throw new ResponseStatusException(BAD_REQUEST, e.getMessage());
+        } catch (UsageBudgetExceededException e) {
+            userQuota.refundQuery(ownerId);
+            throw new ResponseStatusException(TOO_MANY_REQUESTS, e.getMessage());
         } catch (RuntimeException e) {
             userQuota.refundQuery(ownerId);
             log.error("Query failed", e);
@@ -182,6 +186,9 @@ public class AgentController {
         } catch (IllegalArgumentException e) {
             userQuota.refundDocument(ownerId);
             throw new ResponseStatusException(BAD_REQUEST, e.getMessage());
+        } catch (UsageBudgetExceededException e) {
+            userQuota.refundDocument(ownerId);
+            throw new ResponseStatusException(TOO_MANY_REQUESTS, e.getMessage());
         } catch (RuntimeException e) {
             userQuota.refundDocument(ownerId);
             log.error("Document generation failed", e);
