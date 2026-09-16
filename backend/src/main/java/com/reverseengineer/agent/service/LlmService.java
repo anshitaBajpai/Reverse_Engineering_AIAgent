@@ -223,6 +223,14 @@ public class LlmService {
                 concise bullets or short paragraphs.
                 - Make headings, spacing, and list structure consistent throughout.
                 - Make it polished enough to share with an engineering lead.
+                - The behavior findings below may include a "Mermaid Diagram Candidates" \
+                section. If it contains diagrams, carry them forward (adapted as needed) into \
+                Section 3 (High-Level System Context) and/or Section 7 (Runtime Behavior And \
+                Control Flow) or Section 8 (Data Flow And State Management) — do not drop them \
+                during synthesis. If no diagram candidates were provided and the evidence \
+                clearly supports one (e.g. a request lifecycle, auth flow, or data pipeline), \
+                author one Mermaid flowchart or sequence diagram yourself in the most relevant \
+                section instead of leaving the document text-only.
 
                 --- ARCHITECTURE FINDINGS ---
                 %s
