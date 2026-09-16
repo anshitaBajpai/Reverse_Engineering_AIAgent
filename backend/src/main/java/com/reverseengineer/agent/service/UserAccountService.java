@@ -80,12 +80,6 @@ public class UserAccountService {
                 MAPPER, normalize(username)).stream().findFirst();
     }
 
-    public Optional<UserAccount> findById(long id) {
-        return jdbc.query(
-                "SELECT id, username, password_hash, role, created_at FROM users WHERE id = ?",
-                MAPPER, id).stream().findFirst();
-    }
-
     /**
      * Permanently removes the account row. Callers are responsible for tearing
      * down anything keyed on the id first (owned projects, active session).
@@ -98,12 +92,6 @@ public class UserAccountService {
             log.info("Deleted user account id={}.", id);
         }
         return deleted > 0;
-    }
-
-    public boolean existsByUsername(String username) {
-        Integer count = jdbc.queryForObject(
-                "SELECT count(*) FROM users WHERE username = ?", Integer.class, normalize(username));
-        return count != null && count > 0;
     }
 
     private static String normalize(String username) {
