@@ -16,16 +16,16 @@ Point this tool at any GitHub repository and ask questions about how it works. I
 
 ## Tech stack
 
-| Layer                       | What                              |
-| --------------------------- | --------------------------------- |
-| Frontend                    | React 19 + Vite                   |
-| Backend                     | Spring Boot 3.3, Spring AI 1.0    |
-| LLM                         | OpenAI (gpt-4o-mini by default)   |
-| Embeddings                  | text-embedding-3-small            |
-| Vector store                | PGVector (Postgres 16)            |
-| Rate limits / usage budgets | Redis                             |
-| Auth                        | Local accounts + HMAC-signed JWTs |
-| Repo cloning                | JGit                              |
+| Layer                       | What                                                          |
+| --------------------------- | ------------------------------------------------------------- |
+| Frontend                    | React 19 + Vite                                               |
+| Backend                     | Spring Boot 3.3, Spring AI 1.0                                |
+| LLM                         | OpenAI (gpt-4o-mini by default)                               |
+| Embeddings                  | text-embedding-3-small                                        |
+| Vector store                | PGVector (Postgres 16)                                        |
+| Rate limits / usage budgets | Redis                                                         |
+| Auth                        | Local accounts, HMAC-signed JWT in an httpOnly session cookie |
+| Repo cloning                | JGit                                                          |
 
 ## Prerequisites
 
@@ -45,12 +45,15 @@ docker compose up -d
 **2. Set up environment variables**
 
 Copy `.env.example` to `.env` and fill in `OPENAI_API_KEY`. Set `JWT_SECRET` to a
-random string of at least 32 characters — the backend signs its access tokens
+random string of at least 32 characters — the backend signs its session tokens
 with it, and it rejects known placeholders:
 
 ```bash
 openssl rand -base64 48
 ```
+
+Leave `SIGNUP_CODE` blank for open registration, or set it to require that value
+in `POST /auth/register` before an account can be created.
 
 **3. Start the backend**
 
@@ -75,36 +78,38 @@ Open `http://127.0.0.1:5173` in your browser.
 
 To keep token spend predictable:
 
-- **Per-user, per-day** — each account may call `/query` and `/document` a fixed
+- **Per-user, per-day** - each account may call `/query` and `/document` a fixed
   number of times per UTC day (`MAX_QUERIES_PER_USER`, `MAX_DOCUMENTS_PER_USER`,
   both `2`; `0` = unlimited). A slot is reserved before the LLM call and refunded
   if it fails; over the limit returns `429`. Counters reset at 00:00 UTC.
   `GET /auth/me` reports the running totals.
-- **Daily token budget** — per identity (`DAILY_TOKEN_BUDGET`) and a combined
+- **Daily token budget** - per identity (`DAILY_TOKEN_BUDGET`) and a combined
   ceiling across all accounts (`GLOBAL_DAILY_TOKEN_BUDGET`). Over budget returns
   `429` until 00:00 UTC.
-- **Project caps** — repos per account (`MAX_PROJECTS_PER_USER`) and in total
+- **Project caps** - repos per account (`MAX_PROJECTS_PER_USER`) and in total
   (`MAX_PROJECTS_TOTAL`); over the cap, ingest returns `409`. Re-ingesting an
   existing project is always allowed. Abandoned local clones are swept hourly.
-- **Rate limits** — per-IP / per-user token buckets on every endpoint, backed by
+- **Rate limits** - per-IP / per-user token buckets on every endpoint, backed by
   Redis (in-memory fallback if Redis is down, unless `REDIS_REQUIRED=true`).
 
 ## API endpoints
 
 | Method | Path                        | Auth   | What it does                                         |
 | ------ | --------------------------- | ------ | ---------------------------------------------------- |
-| POST   | `/auth/register`            | no     | Create an account, returns a token                   |
-| POST   | `/auth/login`               | no     | Exchange username/password for a token               |
-| GET    | `/auth/me`                  | bearer | Current account + remaining quota                    |
+| POST   | `/auth/register`            | no     | Create an account, sets the session cookie           |
+| POST   | `/auth/login`               | no     | Exchange username/password for a session cookie      |
+| POST   | `/auth/logout`              | cookie | End the current session                              |
+| GET    | `/auth/me`                  | cookie | Current account + remaining quota                    |
+| DELETE | `/auth/account`             | cookie | Delete the account and everything it owns            |
 | GET    | `/health`                   | no     | Liveness check                                       |
-| POST   | `/ingest` · `/ingest/async` | bearer | Clone and ingest a GitHub repo (async returns a job) |
-| GET    | `/jobs/{id}`                | bearer | Poll an async ingest job (owner only)                |
-| POST   | `/query`                    | bearer | Ask a question about ingested code                   |
-| POST   | `/document`                 | bearer | Generate a reverse-engineering document              |
-| GET    | `/projects`                 | bearer | List your ingested projects                          |
-| GET    | `/projects/{id}/status`     | bearer | Check a project's status vs. GitHub                  |
-| POST   | `/projects/{id}/refresh`    | bearer | Re-ingest if new commits exist                       |
-| DELETE | `/projects/{id}`            | bearer | Remove a project (vector rows + local clone)         |
+| POST   | `/ingest` · `/ingest/async` | cookie | Clone and ingest a GitHub repo (async returns a job) |
+| GET    | `/jobs/{id}`                | cookie | Poll an async ingest job (owner only)                |
+| POST   | `/query`                    | cookie | Ask a question about ingested code                   |
+| POST   | `/document`                 | cookie | Generate a reverse-engineering document              |
+| GET    | `/projects`                 | cookie | List your ingested projects                          |
+| GET    | `/projects/{id}/status`     | cookie | Check a project's status vs. GitHub                  |
+| POST   | `/projects/{id}/refresh`    | cookie | Re-ingest if new commits exist                       |
+| DELETE | `/projects/{id}`            | cookie | Remove a project (vector rows + local clone)         |
 
 ## MCP (Claude Desktop)
 
