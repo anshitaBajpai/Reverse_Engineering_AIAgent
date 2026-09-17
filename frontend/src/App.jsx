@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import logoUrl from "./Logo.png";
@@ -393,31 +393,34 @@ function App() {
     normalizeDocumentSections(document?.document),
     documentName || selectedProject?.repo_url || "this codebase",
   );
-  const markdownComponents = {
-    table: ({ children }) => (
-      <div className="markdown-table-wrap">
-        <table className="markdown-table">{children}</table>
-      </div>
-    ),
-    th: ({ children }) => <th>{children}</th>,
-    td: ({ children }) => <td>{children}</td>,
-    tr: ({ children }) => <tr>{children}</tr>,
-    pre: ({ children }) => {
-      const child = Array.isArray(children) ? children[0] : children;
-      if (child?.props?.className === "language-mermaid") return children;
-      return <pre>{children}</pre>;
-    },
-    code: ({ className, children, ...props }) => {
-      if (className === "language-mermaid") {
-        return <MermaidDiagram code={String(children).replace(/\n$/, "")} />;
-      }
-      return (
-        <code className={className} {...props}>
-          {children}
-        </code>
-      );
-    },
-  };
+  const markdownComponents = useMemo(
+    () => ({
+      table: ({ children }) => (
+        <div className="markdown-table-wrap">
+          <table className="markdown-table">{children}</table>
+        </div>
+      ),
+      th: ({ children }) => <th>{children}</th>,
+      td: ({ children }) => <td>{children}</td>,
+      tr: ({ children }) => <tr>{children}</tr>,
+      pre: ({ children }) => {
+        const child = Array.isArray(children) ? children[0] : children;
+        if (child?.props?.className === "language-mermaid") return children;
+        return <pre>{children}</pre>;
+      },
+      code: ({ className, children, ...props }) => {
+        if (className === "language-mermaid") {
+          return <MermaidDiagram code={String(children).replace(/\n$/, "")} />;
+        }
+        return (
+          <code className={className} {...props}>
+            {children}
+          </code>
+        );
+      },
+    }),
+    [],
+  );
 
   const showNotice = (type, message) => setNotice({ type, message });
   const projectIds = selectedProjectId ? [selectedProjectId] : [];
