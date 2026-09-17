@@ -110,7 +110,18 @@ public class LlmService {
                 ## API And Interface Findings
                 List routes, request/response models, public functions, or CLIs with evidence.
                 ## Mermaid Diagram Candidates
-                Provide Mermaid flowchart or sequence diagram snippets only if supported by evidence.
+                Provide Mermaid flowchart or sequence diagram snippets only if supported by \
+                evidence. Keep each diagram easy to follow for someone unfamiliar with the \
+                codebase:
+                - Cap each diagram at around 8-10 nodes/participants; split into multiple \
+                smaller diagrams instead of one dense one.
+                - Label nodes with short, plain-language names (e.g. "Auth Service", "Ingest \
+                job"), not class names, method signatures, or file paths.
+                - Pick the diagram type that matches the shape of the evidence: flowchart for \
+                a pipeline or component graph, sequence diagram for a request/response \
+                exchange over time.
+                - Immediately above each diagram, add a one-sentence caption stating what it \
+                shows.
                 ## Confidence And Gaps
                 List missing or uncertain behavior.
 
@@ -231,6 +242,12 @@ public class LlmService {
                 clearly supports one (e.g. a request lifecycle, auth flow, or data pipeline), \
                 author one Mermaid flowchart or sequence diagram yourself in the most relevant \
                 section instead of leaving the document text-only.
+                - Keep every diagram, whether carried forward or newly authored, easy for a \
+                reader unfamiliar with the codebase to follow: at most around 8-10 nodes/\
+                participants per diagram, short plain-language labels instead of class names \
+                or file paths, the diagram type matched to what it depicts (flowchart for a \
+                pipeline/component graph, sequence diagram for a request/response exchange), \
+                and a one-sentence caption directly above it stating what it shows.
 
                 --- ARCHITECTURE FINDINGS ---
                 %s
