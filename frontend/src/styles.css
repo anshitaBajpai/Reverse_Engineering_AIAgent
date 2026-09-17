@@ -401,7 +401,7 @@ textarea {
     transform 0.18s ease;
 }
 
-.select-option + .select-option {
+.select-option+.select-option {
   margin-top: 4px;
 }
 
@@ -619,6 +619,11 @@ textarea {
 .mermaid-diagram svg {
   max-width: 100%;
   height: auto;
+}
+
+
+.mermaid-diagram svg [class*="edge-animation"] {
+  animation: none !important;
 }
 
 .mermaid-error {
@@ -990,15 +995,13 @@ textarea {
   width: 150vmax;
   height: 150vmax;
   transform: translate(-50%, -50%);
-  background: conic-gradient(
-    from 0deg,
-    transparent 0deg,
-    rgba(124, 140, 255, 0.1) 40deg,
-    transparent 120deg,
-    transparent 210deg,
-    rgba(90, 215, 255, 0.08) 260deg,
-    transparent 330deg
-  );
+  background: conic-gradient(from 0deg,
+      transparent 0deg,
+      rgba(124, 140, 255, 0.1) 40deg,
+      transparent 120deg,
+      transparent 210deg,
+      rgba(90, 215, 255, 0.08) 260deg,
+      transparent 330deg);
   mix-blend-mode: screen;
   animation: auth-spin-slow 42s linear infinite;
 }
@@ -1019,9 +1022,11 @@ textarea {
   0% {
     transform: translate3d(-5%, -3%, 0) scale(1) rotate(0deg);
   }
+
   50% {
     transform: translate3d(4%, 3%, 0) scale(1.15) rotate(8deg);
   }
+
   100% {
     transform: translate3d(-2%, 5%, 0) scale(1.06) rotate(-4deg);
   }
@@ -1038,12 +1043,15 @@ textarea {
     opacity: 0;
     transform: translateY(0) translateX(0);
   }
+
   12% {
     opacity: 0.9;
   }
+
   88% {
     opacity: 0.9;
   }
+
   100% {
     opacity: 0;
     transform: translateY(-92vh) translateX(26px);
@@ -1061,10 +1069,12 @@ textarea {
 }
 
 @media (prefers-reduced-motion: reduce) {
+
   .auth-bg-aurora,
   .auth-bg-beam {
     animation: none;
   }
+
   .auth-bg-particles {
     display: none;
   }
@@ -1340,6 +1350,7 @@ textarea {
   from {
     opacity: 0;
   }
+
   to {
     opacity: 1;
   }
@@ -1350,6 +1361,7 @@ textarea {
     opacity: 0;
     transform: translateY(6px) scale(0.98);
   }
+
   to {
     opacity: 1;
     transform: translateY(0) scale(1);
@@ -1357,6 +1369,7 @@ textarea {
 }
 
 @media (prefers-reduced-motion: reduce) {
+
   .modal-overlay,
   .modal-card {
     animation: none;
