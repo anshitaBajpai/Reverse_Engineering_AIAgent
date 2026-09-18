@@ -118,9 +118,10 @@ public class SecurityConfig {
         NimbusJwtDecoder decoder = NimbusJwtDecoder.withSecretKey(secretKey())
                 .macAlgorithm(MacAlgorithm.HS256)
                 .build();
-        // Default checks (expiry) plus: reject tokens superseded by a newer login.
+        // Default checks (expiry) plus issuer match, plus: reject tokens superseded
+        // by a newer login.
         decoder.setJwtValidator(new DelegatingOAuth2TokenValidator<>(
-                JwtValidators.createDefault(),
+                JwtValidators.createDefaultWithIssuer(props.auth().jwtIssuer()),
                 new SessionTokenValidator(sessionRegistry)));
         return decoder;
     }
