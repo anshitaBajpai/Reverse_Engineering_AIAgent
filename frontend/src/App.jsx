@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import logoUrl from "./Logo.png";
@@ -21,103 +21,6 @@ const escapeFilename = (value) =>
     .trim()
     .replace(/[\\/:*?"<>|]+/g, "-")
     .slice(0, 80);
-
-let mermaidModulePromise = null;
-function loadMermaid() {
-  if (!mermaidModulePromise) {
-    mermaidModulePromise = import("mermaid").then(({ default: mermaid }) => {
-      mermaid.initialize({
-        startOnLoad: false,
-
-        suppressErrorRendering: true,
-        theme: "dark",
-        themeVariables: {
-          background: "#0c1420",
-          primaryColor: "#141f30",
-          primaryTextColor: "#eef2ff",
-          primaryBorderColor: "rgba(144, 171, 255, 0.45)",
-          lineColor: "#7c8cff",
-          secondaryColor: "#101826",
-          tertiaryColor: "#0c1420",
-          fontFamily: "Inter, 'Segoe UI', sans-serif",
-        },
-      });
-      return mermaid;
-    });
-  }
-  return mermaidModulePromise;
-}
-
-function MermaidDiagram({ code }) {
-  const containerRef = useRef(null);
-  const renderId = useId().replace(/[^a-zA-Z0-9]/g, "");
-  const [error, setError] = useState(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    setError(null);
-    loadMermaid()
-      .then((mermaid) => mermaid.render(`mermaid-${renderId}`, code))
-      .then(({ svg }) => {
-        if (!cancelled && containerRef.current) {
-          containerRef.current.innerHTML = svg;
-        }
-      })
-      .catch((err) => {
-        if (!cancelled)
-          setError(err?.message || "This diagram could not be rendered.");
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [code, renderId]);
-
-  if (error) {
-    return (
-      <div className="mermaid-error">
-        <p>Diagram could not be rendered: {error}</p>
-        <pre>
-          <code>{code}</code>
-        </pre>
-      </div>
-    );
-  }
-
-  return <div className="mermaid-diagram" ref={containerRef} />;
-}
-
-async function renderMermaidToPng(code) {
-  const mermaid = await loadMermaid();
-  const { svg } = await mermaid.render(
-    `mermaid-pdf-${Math.random().toString(36).slice(2)}`,
-    code,
-  );
-  const svgBlob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" });
-  const url = URL.createObjectURL(svgBlob);
-  try {
-    const img = new Image();
-    await new Promise((resolve, reject) => {
-      img.onload = resolve;
-      img.onerror = () => reject(new Error("Could not rasterize diagram."));
-      img.src = url;
-    });
-
-    const scale = 2;
-    const width = img.naturalWidth || 800;
-    const height = img.naturalHeight || 450;
-    const canvas = globalThis.document.createElement("canvas");
-    canvas.width = width * scale;
-    canvas.height = height * scale;
-    const ctx = canvas.getContext("2d");
-    ctx.fillStyle = "#0c1420";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-
-    return { dataUrl: canvas.toDataURL("image/png"), width, height };
-  } finally {
-    URL.revokeObjectURL(url);
-  }
-}
 
 function parseMarkdownBlocks(markdown) {
   const lines = String(markdown).split(/\r?\n/);
@@ -403,21 +306,11 @@ function App() {
       th: ({ children }) => <th>{children}</th>,
       td: ({ children }) => <td>{children}</td>,
       tr: ({ children }) => <tr>{children}</tr>,
-      pre: ({ children }) => {
-        const child = Array.isArray(children) ? children[0] : children;
-        if (child?.props?.className === "language-mermaid") return children;
-        return <pre>{children}</pre>;
-      },
-      code: ({ className, children, ...props }) => {
-        if (className === "language-mermaid") {
-          return <MermaidDiagram code={String(children).replace(/\n$/, "")} />;
-        }
-        return (
-          <code className={className} {...props}>
-            {children}
-          </code>
-        );
-      },
+      code: ({ className, children, ...props }) => (
+        <code className={className} {...props}>
+          {children}
+        </code>
+      ),
     }),
     [],
   );
@@ -644,16 +537,6 @@ function App() {
     };
 
     const blocks = parseMarkdownBlocks(normalizedContent);
-    const mermaidImages = new Map();
-    for (const block of blocks) {
-      if (block.type === "code" && block.lang === "mermaid") {
-        try {
-          mermaidImages.set(block, await renderMermaidToPng(block.text));
-        } catch {
-          // Rasterizing failed; the raw mermaid source is written out below instead.
-        }
-      }
-    }
 
     blocks.forEach((block) => {
       if (block.type === "heading") {
@@ -766,23 +649,6 @@ function App() {
       }
 
       if (block.type === "code") {
-        const image = mermaidImages.get(block);
-        if (image) {
-          const renderWidth = Math.min(maxWidth, image.width);
-          const renderHeight = (renderWidth / image.width) * image.height;
-          ensureSpace(renderHeight + paragraphGap);
-          doc.addImage(
-            image.dataUrl,
-            "PNG",
-            margin + (maxWidth - renderWidth) / 2,
-            cursorY,
-            renderWidth,
-            renderHeight,
-          );
-          cursorY += renderHeight + paragraphGap;
-          return;
-        }
-
         ensureSpace(28);
         doc.setFont("courier", "normal");
         doc.setFontSize(10);

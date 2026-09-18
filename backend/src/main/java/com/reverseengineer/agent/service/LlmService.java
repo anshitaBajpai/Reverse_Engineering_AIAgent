@@ -109,19 +109,6 @@ public class LlmService {
                 Describe inputs, transformations, storage, retrieval, and outputs.
                 ## API And Interface Findings
                 List routes, request/response models, public functions, or CLIs with evidence.
-                ## Mermaid Diagram Candidates
-                Provide Mermaid flowchart or sequence diagram snippets only if supported by \
-                evidence. Keep each diagram easy to follow for someone unfamiliar with the \
-                codebase:
-                - Cap each diagram at around 8-10 nodes/participants; split into multiple \
-                smaller diagrams instead of one dense one.
-                - Label nodes with short, plain-language names (e.g. "Auth Service", "Ingest \
-                job"), not class names, method signatures, or file paths.
-                - Pick the diagram type that matches the shape of the evidence: flowchart for \
-                a pipeline or component graph, sequence diagram for a request/response \
-                exchange over time.
-                - Immediately above each diagram, add a one-sentence caption stating what it \
-                shows.
                 ## Confidence And Gaps
                 List missing or uncertain behavior.
 
@@ -193,8 +180,7 @@ public class LlmService {
                 Create a professional reverse-engineering document for: %s
 
                 The document must read like a real consulting deliverable, not a generic \
-                summary. Use Markdown. Include tables where they help. Include Mermaid \
-                diagrams when the evidence supports them.
+                summary. Use Markdown. Include tables where they help.
                 Keep the style consistent across sections: short section intro, then facts, \
                 then implications or gaps. Avoid decorative or uneven formatting.
 
@@ -234,20 +220,6 @@ public class LlmService {
                 concise bullets or short paragraphs.
                 - Make headings, spacing, and list structure consistent throughout.
                 - Make it polished enough to share with an engineering lead.
-                - The behavior findings below may include a "Mermaid Diagram Candidates" \
-                section. If it contains diagrams, carry them forward (adapted as needed) into \
-                Section 3 (High-Level System Context) and/or Section 7 (Runtime Behavior And \
-                Control Flow) or Section 8 (Data Flow And State Management) — do not drop them \
-                during synthesis. If no diagram candidates were provided and the evidence \
-                clearly supports one (e.g. a request lifecycle, auth flow, or data pipeline), \
-                author one Mermaid flowchart or sequence diagram yourself in the most relevant \
-                section instead of leaving the document text-only.
-                - Keep every diagram, whether carried forward or newly authored, easy for a \
-                reader unfamiliar with the codebase to follow: at most around 8-10 nodes/\
-                participants per diagram, short plain-language labels instead of class names \
-                or file paths, the diagram type matched to what it depicts (flowchart for a \
-                pipeline/component graph, sequence diagram for a request/response exchange), \
-                and a one-sentence caption directly above it stating what it shows.
 
                 --- ARCHITECTURE FINDINGS ---
                 %s
