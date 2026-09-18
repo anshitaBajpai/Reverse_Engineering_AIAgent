@@ -7,7 +7,7 @@ COPY backend/src ./src
 RUN mvn -q -DskipTests package
 
 # ---- run ----
-FROM eclipse-temurin:21-jre
+FROM eclipse-temurin:24-jre
 WORKDIR /app
 COPY --from=build /app/target/agent-0.1.0.jar app.jar
 # Render (and most PaaS) inject PORT; application.properties reads ${PORT:8080}.
