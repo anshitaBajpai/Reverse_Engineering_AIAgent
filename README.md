@@ -89,6 +89,10 @@ To keep token spend predictable:
 - **Project caps** — repos per account (`MAX_PROJECTS_PER_USER`) and in total
   (`MAX_PROJECTS_TOTAL`). Re-ingesting an existing project is always allowed.
   Abandoned local clones are swept hourly.
+- **Concurrent ingests** — up to `MAX_CONCURRENT_INGESTS` (default `2`) repos
+  ingest in parallel per instance; a second ingest of the same repo is rejected
+  while the first runs. A re-ingest swaps the new version in atomically, so a
+  failed one leaves the previous version intact.
 - **Rate limits** — per-IP / per-user token buckets on every endpoint, backed by
   Redis (in-memory fallback if Redis is down, unless `REDIS_REQUIRED=true`).
 - **Repo host allowlist** — only hosts listed in `ALLOWED_REPO_HOSTS` (`github.com`
