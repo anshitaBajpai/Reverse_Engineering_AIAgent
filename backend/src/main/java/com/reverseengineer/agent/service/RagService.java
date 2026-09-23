@@ -12,6 +12,7 @@ import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.nio.file.Path;
 import java.nio.charset.StandardCharsets;
@@ -19,7 +20,6 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.*;
-import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Collectors;
 
 @Service
@@ -36,8 +36,14 @@ public class RagService {
     private final ProjectRegistry registry;
     private final ResponseCacheService responseCache;
     private final UsageGuardService usageGuard;
+    private final TransactionTemplate transactionTemplate;
 
-    private final ReentrantLock ingestLock = new ReentrantLock();
+    /**
+     * projectId -> ownerId for every ingest running on this instance. Guarded by
+     * itself: admission (duplicate check, concurrency cap, project limits) happens
+     * under one lock so parallel ingests cannot race past the project caps.
+     */
+    private final Map<String, Long> ingestsInFlight = new HashMap<>();
     private static final int MIN_DOCUMENT_RETRIEVAL_K = 12;
 
     // Rough bytes-per-token ratio for English/source text. Used only to bill an
@@ -53,7 +59,8 @@ public class RagService {
                       AppProperties props,
                       ProjectRegistry registry,
                       ResponseCacheService responseCache,
-                      UsageGuardService usageGuard) {
+                      UsageGuardService usageGuard,
+                      TransactionTemplate transactionTemplate) {
         this.vectorStore = vectorStore;
         this.jdbcTemplate = jdbcTemplate;
         this.repoLoader = repoLoader;
@@ -63,6 +70,7 @@ public class RagService {
         this.registry = registry;
         this.responseCache = responseCache;
         this.usageGuard = usageGuard;
+        this.transactionTemplate = transactionTemplate;
     }
 
     @PostConstruct
@@ -94,33 +102,32 @@ public class RagService {
 
     public Map<String, Object> ingestRepo(String repoUrl, String identity, Long ownerId) throws Exception {
         log.info(">>> INGEST START: {}", repoUrl);
-        if (!ingestLock.tryLock()) {
-            throw new IllegalStateException(
-                    "An ingestion is already in progress. Please try again later.");
-        }
+        repoLoader.validateRepoUrl(repoUrl);
+        String projectId = ProjectRegistry.toProjectId(repoUrl, ownerId);
+        beginIngest(projectId, ownerId);
+        Path stagingPath = repoLoader.stagingPath(projectId);
         try {
-            repoLoader.validateRepoUrl(repoUrl);
-            String projectId = ProjectRegistry.toProjectId(repoUrl, ownerId);
-            enforceProjectLimits(projectId, ownerId);
             String ownerKey = ownerKey(ownerId);
-            Path localPath = repoLoader.projectPath(projectId);
-            log.info("Cloning into {} (project_id={})", localPath, projectId);
+            log.info("Cloning into {} (project_id={})", stagingPath, projectId);
 
-            String commitSha = repoLoader.cloneRepo(repoUrl, localPath);
-            List<CodeFile> files = repoLoader.loadCodeFiles(localPath);
+            String commitSha = repoLoader.cloneRepo(repoUrl, stagingPath);
+            List<CodeFile> files = repoLoader.loadCodeFiles(stagingPath);
             log.info("Loaded {} files", files.size());
             if (files.isEmpty()) {
                 throw new RuntimeException("No supported code files found in the repository.");
             }
 
             List<Chunk> chunks = chunker.chunkCodeFiles(files);
-            clearProject(projectId);
 
+            // Tags this ingest's rows so the swap below can tell them apart from
+            // the project's previous rows.
+            String ingestId = UUID.randomUUID().toString();
             List<Document> docs = chunks.stream()
                     .map(c -> new Document(c.text(), Map.of(
                             "project_id",  projectId,
                             "owner_id",    ownerKey,
                             "repo_url",    repoUrl,
+                            "ingest_id",   ingestId,
                             "file_path",   c.filePath(),
                             "chunk_index", c.chunkIndex(),
                             "start_line",  Objects.requireNonNullElse(c.startLine(), -1),
@@ -128,23 +135,43 @@ public class RagService {
                     )))
                     .toList();
 
-            int batchSize = props.embeddingBatchSize();
-            for (int start = 0; start < docs.size(); start += batchSize) {
-                int end = Math.min(start + batchSize, docs.size());
-                vectorStore.add(docs.subList(start, end));
-                log.info("Stored chunks {}-{} of {} in vector store.",
-                        start + 1, end, docs.size());
+            // New rows and the removal of the old ones commit together: readers see
+            // the old version until the commit and the new one after it, and a
+            // failure anywhere rolls back to the old version untouched. If two
+            // instances ingest the same project at once, the later commit deletes
+            // the earlier one's rows, so exactly one complete version survives.
+            Integer replaced = transactionTemplate.execute(status -> {
+                int batchSize = props.embeddingBatchSize();
+                for (int start = 0; start < docs.size(); start += batchSize) {
+                    int end = Math.min(start + batchSize, docs.size());
+                    vectorStore.add(docs.subList(start, end));
+                    log.info("Stored chunks {}-{} of {} in vector store.",
+                            start + 1, end, docs.size());
+                }
+                return jdbcTemplate.update(
+                        "DELETE FROM vector_store WHERE metadata->>'project_id' = ? "
+                        + "AND metadata->>'ingest_id' IS DISTINCT FROM ?",
+                        projectId, ingestId);
+            });
+            if (replaced != null && replaced > 0) {
+                log.info("Replaced {} previous chunks for project '{}'.", replaced, projectId);
             }
 
             recordEmbeddingUsage(identity, docs);
 
+            try {
+                repoLoader.promoteClone(stagingPath, projectId);
+            } catch (Exception e) {
+                // The vectors are already committed; only the repo tree used for
+                // document generation is affected.
+                log.warn("Could not promote clone for project '{}': {}", projectId, e.getMessage());
+            }
+
+            // The new ingested_at changes this project's response-cache keys, so
+            // answers built from the previous version are never served again.
             registry.register(new ProjectInfo(
                     projectId, repoUrl, Instant.now(), commitSha,
                     files.size(), chunks.size(), ownerId));
-
-            // The corpus just changed; drop any answers/documents built from the
-            // previous state so a re-ingest can never serve a stale response.
-            responseCache.clear();
 
             return Map.of(
                     "project_id",     projectId,
@@ -153,7 +180,8 @@ public class RagService {
                     "chunks_created", chunks.size()
             );
         } finally {
-            ingestLock.unlock();
+            repoLoader.discardClone(stagingPath);
+            endIngest(projectId);
         }
     }
 
@@ -167,7 +195,7 @@ public class RagService {
                 "question", normalizedProjectIds, question, effectiveK, "", ownerId);
         Optional<Map<String, Object>> cached = responseCache.get(cacheKey);
         if (cached.isPresent()) {
-            log.info("Response cache hit for question (entries={}).", responseCache.size());
+            log.info("Response cache hit for question.");
             return cached.get();
         }
         int searchK = retrievalCandidateCount(effectiveK, props.maxQueryK());
@@ -192,7 +220,7 @@ public class RagService {
                 "document", normalizedProjectIds, projectName, effectiveK, "document", ownerId);
         Optional<Map<String, Object>> cached = responseCache.get(cacheKey);
         if (cached.isPresent()) {
-            log.info("Response cache hit for document (entries={}).", responseCache.size());
+            log.info("Response cache hit for document.");
             return cached.get();
         }
 
@@ -261,9 +289,8 @@ public class RagService {
         if (removed) {
             repoLoader.deleteProjectClone(projectId);
         }
-        // A delete followed by a same-SHA re-ingest must not resurrect the
-        // deleted project's cached answers.
-        responseCache.clear();
+        // No cache eviction needed: the project is gone from the registry, so no
+        // new cache key includes it, and a later re-ingest gets a new ingested_at.
         return removed;
     }
 
@@ -322,7 +349,8 @@ public class RagService {
         String projectVersion = registry.findByIdsForOwner(projectIds, ownerId).stream()
                 .sorted(Comparator.comparing(ProjectInfo::projectId))
                 .map(project -> project.projectId() + "="
-                        + Objects.toString(project.lastCommitSha(), "unknown"))
+                        + Objects.toString(project.lastCommitSha(), "unknown") + "@"
+                        + (project.ingestedAt() != null ? project.ingestedAt().toEpochMilli() : 0))
                 .collect(Collectors.joining(","));
         String raw = String.join("|", type, ownerKey(ownerId), projectVersion, variant,
                 Integer.toString(k), Objects.toString(prompt, "").trim());
@@ -437,15 +465,24 @@ public class RagService {
         if (registry.findByIdForOwner(projectId, ownerId).isPresent()) {
             return; // re-ingest, not a new slot
         }
+        // Running ingests of not-yet-registered projects each take a slot when
+        // they finish, so count them now. Caller holds the ingestsInFlight lock.
+        List<Long> pendingOwners = ingestsInFlight.entrySet().stream()
+                .filter(e -> !registry.isKnownProjectId(e.getKey()))
+                .map(Map.Entry::getValue)
+                .toList();
+        long pendingForOwner = pendingOwners.stream()
+                .filter(owner -> Objects.equals(owner, ownerId))
+                .count();
         int perUser = props.limits().maxProjectsPerUser();
         if (ownerId != null && perUser > 0
-                && registry.findAllForOwner(ownerId).size() >= perUser) {
+                && registry.findAllForOwner(ownerId).size() + pendingForOwner >= perUser) {
             throw new IllegalStateException(
                     "You have reached the limit of " + perUser
                     + " projects. Delete one before ingesting another.");
         }
         int total = props.limits().maxProjectsTotal();
-        if (total > 0 && registry.totalCount() >= total) {
+        if (total > 0 && registry.totalCount() + pendingOwners.size() >= total) {
             throw new IllegalStateException(
                     "The service is at project capacity. Please try again later.");
         }
@@ -475,16 +512,32 @@ public class RagService {
         usageGuard.recordUsage(identity, clamped, 0);
     }
 
-    private void clearProject(String projectId) {
-        try {
-            int deleted = jdbcTemplate.update(
-                    "DELETE FROM vector_store WHERE metadata->>'project_id' = ?",
-                    projectId);
-            if (deleted > 0) {
-                log.info("Cleared {} existing chunks for project '{}'.", deleted, projectId);
+    /**
+     * Admits an ingest: rejects a second ingest of the same project and anything
+     * beyond {@code app.max-concurrent-ingests}, and enforces the project caps
+     * with running ingests counted. Every successful call must be paired with
+     * {@link #endIngest}.
+     *
+     * @throws IllegalStateException (mapped to HTTP 409) when the ingest cannot start
+     */
+    private void beginIngest(String projectId, Long ownerId) {
+        synchronized (ingestsInFlight) {
+            if (ingestsInFlight.containsKey(projectId)) {
+                throw new IllegalStateException(
+                        "This repository is already being ingested. Please wait for it to finish.");
             }
-        } catch (Exception e) {
-            log.debug("clearProject('{}') skipped: {}", projectId, e.getMessage());
+            if (ingestsInFlight.size() >= props.maxConcurrentIngests()) {
+                throw new IllegalStateException(
+                        "The server is busy ingesting other repositories. Please try again shortly.");
+            }
+            enforceProjectLimits(projectId, ownerId);
+            ingestsInFlight.put(projectId, ownerId);
+        }
+    }
+
+    private void endIngest(String projectId) {
+        synchronized (ingestsInFlight) {
+            ingestsInFlight.remove(projectId);
         }
     }
 

@@ -188,6 +188,34 @@ public class RepoLoaderService {
         return sb.toString();
     }
 
+    /**
+     * A fresh, unique directory for an ingest to clone into. The live clone is
+     * only replaced by {@link #promoteClone} once the ingest has committed, so a
+     * failed ingest never leaves a project without its clone. Directories that are
+     * never promoted are removed by the orphan-clone sweep.
+     */
+    public Path stagingPath(String projectId) {
+        return Path.of(props.repoDir())
+                .resolve(".staging-" + projectId + "-" + UUID.randomUUID())
+                .normalize();
+    }
+
+    /** Replaces the project's live clone with {@code staging}. */
+    public void promoteClone(Path staging, String projectId) throws IOException {
+        Path target = projectPath(projectId);
+        deleteDirectory(target);
+        Files.move(staging, target, StandardCopyOption.ATOMIC_MOVE);
+    }
+
+    /** Best-effort removal of a staging clone that was not promoted. */
+    public void discardClone(Path staging) {
+        try {
+            deleteDirectory(staging);
+        } catch (IOException e) {
+            log.warn("Could not delete staging clone {}: {}", staging, e.getMessage());
+        }
+    }
+
     public void deleteProjectClone(String projectId) {
         Path path = projectPath(projectId);
         try {

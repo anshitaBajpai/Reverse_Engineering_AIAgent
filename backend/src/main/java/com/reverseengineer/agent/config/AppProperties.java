@@ -18,6 +18,7 @@ public record AppProperties(
         int maxQuestionLength,
         int maxProjectNameLength,
         int embeddingBatchSize,
+        int maxConcurrentIngests,
         String githubToken,
         Long githubStatusTtlMs,
         Llm llm,
@@ -28,6 +29,11 @@ public record AppProperties(
 ) {
     public int embeddingBatchSize() {
         return embeddingBatchSize > 0 ? embeddingBatchSize : 100;
+    }
+
+    /** Ingests allowed to run at once on this instance (default 2). */
+    public int maxConcurrentIngests() {
+        return maxConcurrentIngests > 0 ? maxConcurrentIngests : 2;
     }
 
     public Long githubStatusTtlMs() {
