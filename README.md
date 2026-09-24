@@ -4,8 +4,8 @@ Point this tool at any GitHub repository and ask questions about how it works. I
 
 ## What it does
 
-- **Ingest a repo** - paste a GitHub URL; the backend clones it, chunks the code, and loads it into a PGVector store
-- **Ask questions** - RAG-backed Q&A over the codebase ("how does authentication work?", "where is the rate limiter?")
+- **Ingest a repo** - paste a GitHub URL; the backend clones it, splits the code at class/function boundaries, and loads it into a PGVector store
+- **Ask questions** - RAG-backed Q&A over the codebase ("how does authentication work?", "where is the rate limiter?"). Retrieval combines vector search with full-text search on identifiers, and every answer also sees the repo's file tree and README
 - **Generate a document** - runs a 4-step LLM chain (architecture → behaviour → risk → synthesis) and produces a Markdown report, exportable as PDF
 - **Check for updates** - compares the ingested commit SHA against the current HEAD on GitHub and re-ingests on demand
 - **MCP server** - optionally exposes the same tools over SSE so Claude Desktop (or any MCP client) can call them directly, no UI needed.
@@ -73,6 +73,28 @@ npm run dev
 ```
 
 Open `http://127.0.0.1:5173` in your browser.
+
+## Retrieval quality
+
+How it retrieves:
+
+- **Chunking** — files are split at declaration boundaries (classes, functions,
+  methods, Markdown headings, ...) for about 25 file types, keeping doc comments
+  and annotations with their declaration. Each chunk starts with its file path
+  and, for nested code, the enclosing class, so both searches know where it lives.
+- **Hybrid search** — vector search is combined with Postgres full-text search by
+  reciprocal rank fusion. The full-text index splits `camelCase` and `snake_case`
+  identifiers, so exact names like `RateLimiterService` or `resolve_redirects`
+  are found. Set `HYBRID_SEARCH_ENABLED=false` for vector-only.
+- **Repository overview** — questions and documents include the repo's file tree
+  and the start of its README.
+
+Repos ingested before these changes keep their old chunks until re-ingested
+(hybrid search works on them right away).
+
+It needs Docker, costs a few cents in embeddings, and writes
+`target/retrieval-eval.md`. Run it before and after changing chunking or
+retrieval, and add questions for the kinds of repos you care about.
 
 ## Limits
 
