@@ -194,7 +194,7 @@ public class LlmService {
                 # Technical Document: %s
                 ## Document Control
                 Present these as a single Markdown table with exactly these columns:
-                Document Purpose | Source Basis | Confidence Level | Generated Output Type
+                Document Purpose | Source Basis | Confidence Level
                 Use one row only, keep the full wording, and do not shorten or paraphrase the evidence.
                 ## 1. Executive Summary
                 ## 2. Scope And Methodology

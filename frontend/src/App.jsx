@@ -145,7 +145,6 @@ function normalizeDocumentControl(markdown, projectName = "this codebase") {
       `Provide a comprehensive overview of ${projectName} for maintenance and future development.`,
       "Repository structure, source files, and README documentation.",
       "High",
-      "Technical Document",
     ];
     const values = defaultRows.map((fallback, index) =>
       rows[index] && rows[index].trim() ? rows[index].trim() : fallback,
@@ -154,9 +153,9 @@ function normalizeDocumentControl(markdown, projectName = "this codebase") {
     return [
       "## Document Control",
       "",
-      "| Document Purpose | Source Basis | Confidence Level | Generated Output Type |",
-      "| --- | --- | --- | --- |",
-      `| ${values[0]} | ${values[1]} | ${values[2]} | ${values[3]} |`,
+      "| Document Purpose | Source Basis | Confidence Level |",
+      "| --- | --- | --- |",
+      `| ${values[0]} | ${values[1]} | ${values[2]} |`,
       "",
     ].join("\n");
   };
@@ -187,7 +186,7 @@ function normalizeDocumentControl(markdown, projectName = "this codebase") {
           .map((line) => line.trim())
           .filter(Boolean)
           .filter((line) => !line.startsWith("#"))
-          .slice(0, 4);
+          .slice(0, 3);
 
   return text.replace(
     /## Document Control[\s\S]*?(?=\n## |\n# |\s*$)/,
