@@ -154,6 +154,11 @@ public class RepoLoaderService {
     }
 
     public String buildRepoTree(Path repoPath) {
+        return buildRepoTree(repoPath, 250);
+    }
+
+    /** Indented tree of the clone to depth 3, stopping after {@code maxEntries} files and directories. */
+    public String buildRepoTree(Path repoPath, int maxEntries) {
         if (!Files.exists(repoPath)) return "Repository tree unavailable.";
 
         var sb = new StringBuilder();
@@ -166,7 +171,7 @@ public class RepoLoaderService {
                 public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
                     String name = dir.getFileName() != null ? dir.getFileName().toString() : "";
                     if (SKIP_DIRS.contains(name)) return FileVisitResult.SKIP_SUBTREE;
-                    if (count[0]++ >= 250) return FileVisitResult.TERMINATE;
+                    if (count[0]++ >= maxEntries) return FileVisitResult.TERMINATE;
                     int depth = repoPath.relativize(dir).getNameCount();
                     sb.append("  ".repeat(depth)).append(name).append("/\n");
                     return FileVisitResult.CONTINUE;
@@ -174,7 +179,7 @@ public class RepoLoaderService {
 
                 @Override
                 public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
-                    if (count[0]++ >= 250) return FileVisitResult.TERMINATE;
+                    if (count[0]++ >= maxEntries) return FileVisitResult.TERMINATE;
                     int depth = repoPath.relativize(file).getNameCount();
                     sb.append("  ".repeat(depth - 1)).append(file.getFileName()).append("\n");
                     return FileVisitResult.CONTINUE;
@@ -186,6 +191,29 @@ public class RepoLoaderService {
         }
 
         return sb.toString();
+    }
+
+    /**
+     * The first {@code maxChars} characters of the clone's top-level README
+     * (README, README.md, README.rst, ... in any case), or {@code null} if there
+     * is none or it cannot be read as UTF-8.
+     */
+    public String readReadme(Path repoPath, int maxChars) {
+        if (!Files.isDirectory(repoPath)) return null;
+        try (var entries = Files.list(repoPath)) {
+            Optional<Path> readme = entries
+                    .filter(Files::isRegularFile)
+                    .filter(p -> p.getFileName().toString().toLowerCase().matches("readme(\\.(md|markdown|rst|txt|adoc))?"))
+                    .sorted()
+                    .findFirst();
+            if (readme.isEmpty() || Files.size(readme.get()) > props.maxFileBytes()) return null;
+            String content = Files.readString(readme.get(), StandardCharsets.UTF_8).strip();
+            if (content.isEmpty()) return null;
+            return content.length() > maxChars ? content.substring(0, maxChars) + "\n[...]" : content;
+        } catch (IOException e) {
+            log.debug("Could not read README in {}: {}", repoPath, e.getMessage());
+            return null;
+        }
     }
 
     /**
