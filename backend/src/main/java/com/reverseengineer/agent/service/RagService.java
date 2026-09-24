@@ -37,6 +37,7 @@ public class RagService {
     private final ResponseCacheService responseCache;
     private final UsageGuardService usageGuard;
     private final TransactionTemplate transactionTemplate;
+    private final KeywordSearchService keywordSearch;
 
     /**
      * projectId -> ownerId for every ingest running on this instance. Guarded by
@@ -45,6 +46,17 @@ public class RagService {
      */
     private final Map<String, Long> ingestsInFlight = new HashMap<>();
     private static final int MIN_DOCUMENT_RETRIEVAL_K = 12;
+    /** Reciprocal rank fusion constant; 60 is the standard choice from the original paper. */
+    private static final int RRF_K = 60;
+
+    // Repository overview budgets (file-tree entries, README characters), split
+    // across the projects in scope.
+    private static final int QUESTION_TREE_ENTRIES = 120;
+    private static final int QUESTION_README_CHARS = 1_500;
+    private static final int DOCUMENT_TREE_ENTRIES = 250;
+    private static final int DOCUMENT_README_CHARS = 4_000;
+    private static final int MIN_TREE_ENTRIES_PER_PROJECT = 30;
+    private static final int MIN_README_CHARS_PER_PROJECT = 400;
 
     // Rough bytes-per-token ratio for English/source text. Used only to bill an
     // ingest's embedding calls against the daily usage budget; the embedding API
@@ -60,7 +72,8 @@ public class RagService {
                       ProjectRegistry registry,
                       ResponseCacheService responseCache,
                       UsageGuardService usageGuard,
-                      TransactionTemplate transactionTemplate) {
+                      TransactionTemplate transactionTemplate,
+                      KeywordSearchService keywordSearch) {
         this.vectorStore = vectorStore;
         this.jdbcTemplate = jdbcTemplate;
         this.repoLoader = repoLoader;
@@ -71,6 +84,7 @@ public class RagService {
         this.responseCache = responseCache;
         this.usageGuard = usageGuard;
         this.transactionTemplate = transactionTemplate;
+        this.keywordSearch = keywordSearch;
     }
 
     @PostConstruct
@@ -191,19 +205,21 @@ public class RagService {
         List<String> normalizedProjectIds = normalizeProjectIds(projectIds);
         requireKnownProjects(normalizedProjectIds, ownerId);
         int effectiveK = Math.min(Math.max(k, 1), props.maxQueryK());
+        boolean hybrid = props.hybridSearchEnabled();
         String cacheKey = responseCacheKey(
-                "question", normalizedProjectIds, question, effectiveK, "", ownerId);
+                "question", normalizedProjectIds, question, effectiveK, hybrid ? "hybrid" : "vector", ownerId);
         Optional<Map<String, Object>> cached = responseCache.get(cacheKey);
         if (cached.isPresent()) {
             log.info("Response cache hit for question.");
             return cached.get();
         }
-        int searchK = retrievalCandidateCount(effectiveK, props.maxQueryK());
-        SearchRequest request = buildSearchRequest(question, searchK, normalizedProjectIds, ownerId);
-        List<Document> results = selectDiverseDocuments(
-                deduplicateDocuments(vectorStore.similaritySearch(request)), effectiveK);
+        List<Document> results = retrieve(question, effectiveK, normalizedProjectIds, ownerId, hybrid);
         List<String> formatted = results.stream().map(this::formatChunk).toList();
-        String context = String.join("\n\n", formatted);
+        String context = repositoryOverview(
+                registry.findByIdsForOwner(normalizedProjectIds, ownerId),
+                QUESTION_TREE_ENTRIES, QUESTION_README_CHARS)
+                + "\n\n## Retrieved Code Evidence\n"
+                + String.join("\n\n", formatted);
         String answer  = llm.askLlm(question, context, identity);
         Map<String, Object> response = Map.of("answer", answer, "sources", formatted);
         responseCache.put(cacheKey, response);
@@ -231,14 +247,9 @@ public class RagService {
 
         List<ProjectInfo> scopedProjects = registry.findByIdsForOwner(normalizedProjectIds, ownerId);
 
-        StringBuilder treeSection = new StringBuilder("## Repository Trees\n");
-        for (ProjectInfo project : scopedProjects) {
-            treeSection.append("\n### ").append(project.repoUrl()).append("\n");
-            treeSection.append(repoLoader.buildRepoTree(repoLoader.projectPath(project.projectId())));
-        }
-
         List<String> formatted = deduped.stream().map(this::formatChunk).toList();
-        String context = treeSection + "\n\n## Retrieved Code Evidence\n"
+        String context = repositoryOverview(scopedProjects, DOCUMENT_TREE_ENTRIES, DOCUMENT_README_CHARS)
+                + "\n\n## Retrieved Code Evidence\n"
                 + String.join("\n\n", formatted);
 
         Map<String, Object> chainResult = llm.runReverseEngineeringChain(context, projectName, identity);
@@ -250,6 +261,71 @@ public class RagService {
         );
         responseCache.put(cacheKey, response);
         return response;
+    }
+
+    /**
+     * The {@code k} chunks most relevant to {@code query}, spread across files.
+     *
+     * <p>With {@code hybrid}, vector and keyword results are merged by reciprocal
+     * rank fusion, so a chunk ranked well by either search surfaces; otherwise
+     * only vector search is used. Public so the retrieval evaluation can compare
+     * both modes.</p>
+     */
+    public List<Document> retrieve(String query, int k, List<String> projectIds,
+                                   Long ownerId, boolean hybrid) {
+        int searchK = retrievalCandidateCount(k, props.maxQueryK());
+        List<Document> vectorResults = vectorStore.similaritySearch(
+                buildSearchRequest(query, searchK, projectIds, ownerId));
+        List<Document> candidates = vectorResults;
+        if (hybrid && keywordSearch.isAvailable()) {
+            List<Document> keywordResults = keywordSearch.search(
+                    query, searchK, projectIds, ownerKey(ownerId));
+            candidates = reciprocalRankFusion(List.of(vectorResults, keywordResults));
+        }
+        return selectDiverseDocuments(deduplicateDocuments(candidates), k);
+    }
+
+    /**
+     * Merges ranked lists by reciprocal rank fusion: each document scores
+     * {@code sum(1 / (RRF_K + rank))} over the lists it appears in. Ties keep the
+     * order of first appearance, so earlier lists win.
+     */
+    static List<Document> reciprocalRankFusion(List<List<Document>> rankings) {
+        Map<String, Double> scores = new HashMap<>();
+        Map<String, Document> byId = new LinkedHashMap<>();
+        for (List<Document> ranking : rankings) {
+            for (int rank = 0; rank < ranking.size(); rank++) {
+                Document document = ranking.get(rank);
+                scores.merge(document.getId(), 1.0 / (RRF_K + rank + 1), Double::sum);
+                byId.putIfAbsent(document.getId(), document);
+            }
+        }
+        return byId.values().stream()
+                .sorted(Comparator.comparingDouble((Document d) -> scores.get(d.getId())).reversed())
+                .toList();
+    }
+
+    /**
+     * A map of each project for the LLM: its top-level file tree and the start
+     * of its README. Retrieved chunks show details; this shows where they sit.
+     * The tree and README budgets are shared across projects.
+     */
+    private String repositoryOverview(List<ProjectInfo> projects, int treeEntries, int readmeChars) {
+        StringBuilder overview = new StringBuilder("## Repository Overview\n");
+        int count = Math.max(1, projects.size());
+        int treeBudget = Math.max(MIN_TREE_ENTRIES_PER_PROJECT, treeEntries / count);
+        int readmeBudget = Math.max(MIN_README_CHARS_PER_PROJECT, readmeChars / count);
+        for (ProjectInfo project : projects) {
+            Path clone = repoLoader.projectPath(project.projectId());
+            overview.append("\n### ").append(project.repoUrl()).append("\n")
+                    .append("File tree:\n")
+                    .append(repoLoader.buildRepoTree(clone, treeBudget)).append("\n");
+            String readme = repoLoader.readReadme(clone, readmeBudget);
+            if (readme != null) {
+                overview.append("README (excerpt):\n").append(readme).append("\n");
+            }
+        }
+        return overview.toString();
     }
 
     public List<ProjectInfo> listProjects(Long ownerId) {
@@ -443,7 +519,13 @@ public class RagService {
         }
 
         String projectPrefix = projectId != null ? "[" + projectId + "] " : "";
-        return "### File: " + projectPrefix + filePath + lineLabel + "\n" + doc.getText();
+        // The chunker's "File: ..." header line repeats the heading; drop it.
+        String text = Objects.toString(doc.getText(), "");
+        if (text.startsWith(ChunkerService.FILE_HEADER_PREFIX)) {
+            int newline = text.indexOf('\n');
+            text = newline >= 0 ? text.substring(newline + 1) : "";
+        }
+        return "### File: " + projectPrefix + filePath + lineLabel + "\n" + text;
     }
 
     private void requireIngested(Long ownerId) {

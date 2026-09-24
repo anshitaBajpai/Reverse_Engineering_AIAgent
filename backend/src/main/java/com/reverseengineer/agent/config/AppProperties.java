@@ -19,6 +19,7 @@ public record AppProperties(
         int maxProjectNameLength,
         int embeddingBatchSize,
         int maxConcurrentIngests,
+        boolean hybridSearchEnabled,
         String githubToken,
         Long githubStatusTtlMs,
         Llm llm,
