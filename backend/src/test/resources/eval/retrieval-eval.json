@@ -1,0 +1,30 @@
+[
+  {
+    "repo_url": "https://github.com/pallets/itsdangerous",
+    "questions": [
+      { "question": "How is a signature computed and verified?", "expected_files": ["src/itsdangerous/signer.py"] },
+      { "question": "How does signature expiry with max_age work?", "expected_files": ["src/itsdangerous/timed.py"] },
+      { "question": "What does TimestampSigner.unsign check?", "expected_files": ["src/itsdangerous/timed.py"] },
+      { "question": "How is data serialized to a string before it is signed?", "expected_files": ["src/itsdangerous/serializer.py"] },
+      { "question": "How is URL-safe base64 encoding implemented?", "expected_files": ["src/itsdangerous/encoding.py"] },
+      { "question": "Which exception is raised when a signature does not match?", "expected_files": ["src/itsdangerous/exc.py"] },
+      { "question": "How does key rotation with several secret keys work?", "expected_files": ["src/itsdangerous/signer.py", "src/itsdangerous/serializer.py"] },
+      { "question": "How are payloads compressed by the URL-safe serializers?", "expected_files": ["src/itsdangerous/url_safe.py"] }
+    ]
+  },
+  {
+    "repo_url": "https://github.com/psf/requests",
+    "questions": [
+      { "question": "How does requests follow HTTP redirects?", "expected_files": ["src/requests/sessions.py"] },
+      { "question": "Where is HTTP Basic authentication applied to a request?", "expected_files": ["src/requests/auth.py"] },
+      { "question": "How are connection pooling and retries configured?", "expected_files": ["src/requests/adapters.py"] },
+      { "question": "How is a response body decoded as JSON?", "expected_files": ["src/requests/models.py"] },
+      { "question": "How are cookies kept between requests in a session?", "expected_files": ["src/requests/cookies.py", "src/requests/sessions.py"] },
+      { "question": "What does HTTPAdapter.send do?", "expected_files": ["src/requests/adapters.py"] },
+      { "question": "Where is CaseInsensitiveDict implemented?", "expected_files": ["src/requests/structures.py"] },
+      { "question": "How are proxies picked up from environment variables?", "expected_files": ["src/requests/utils.py", "src/requests/sessions.py"] },
+      { "question": "Which exceptions are raised for timeouts?", "expected_files": ["src/requests/exceptions.py"] },
+      { "question": "How does requests.get build and send a request?", "expected_files": ["src/requests/api.py"] }
+    ]
+  }
+]
