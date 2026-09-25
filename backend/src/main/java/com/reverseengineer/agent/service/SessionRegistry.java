@@ -39,7 +39,9 @@ public class SessionRegistry {
         this.redis = redisTemplateProvider.getIfAvailable();
         this.redisEnabled = this.redis != null;
         long ttlSeconds = props.auth() != null ? props.auth().jwtTtlSeconds() : 3600L;
-        // Outlive any valid token so the record is present for the token's whole life.
+        // Outlive any token minted before a rotate/logout so it is rejected for its whole
+        // life. Renewed tokens (SessionRenewalFilter) may outlive the record; that only
+        // falls back to fail-open once every superseded token has already expired.
         this.ttl = Duration.ofSeconds(ttlSeconds + 60);
     }
 
