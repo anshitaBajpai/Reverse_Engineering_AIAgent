@@ -4,6 +4,7 @@ import com.reverseengineer.agent.config.AppProperties;
 import com.reverseengineer.agent.model.UserAccount;
 import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
 import org.springframework.security.oauth2.jwt.JwsHeader;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.jwt.JwtClaimsSet;
 import org.springframework.security.oauth2.jwt.JwtEncoder;
 import org.springframework.security.oauth2.jwt.JwtEncoderParameters;
@@ -25,14 +26,25 @@ public class JwtIssuer {
     }
 
     public String issue(UserAccount user, String sessionId) {
+        return sign(Long.toString(user.id()), user.username(),
+                user.role() != null ? user.role() : "USER", sessionId);
+    }
+
+    /** Re-mints {@code current} with a fresh expiry, keeping its subject, claims and session id. */
+    public String renew(Jwt current) {
+        return sign(current.getSubject(), current.getClaimAsString("username"),
+                current.getClaimAsString("role"), current.getClaimAsString("sid"));
+    }
+
+    private String sign(String subject, String username, String role, String sessionId) {
         Instant now = Instant.now();
         JwtClaimsSet claims = JwtClaimsSet.builder()
                 .issuer(config.jwtIssuer())
                 .issuedAt(now)
                 .expiresAt(now.plus(config.jwtTtlSeconds(), ChronoUnit.SECONDS))
-                .subject(Long.toString(user.id()))
-                .claim("username", user.username())
-                .claim("role", user.role() != null ? user.role() : "USER")
+                .subject(subject)
+                .claim("username", username)
+                .claim("role", role)
                 .claim("sid", sessionId)
                 .build();
         return encoder.encode(JwtEncoderParameters.from(

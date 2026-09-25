@@ -25,6 +25,7 @@ import org.springframework.security.oauth2.jwt.JwtValidators;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
+import org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter;
 import org.springframework.security.web.AuthenticationEntryPoint;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.access.AccessDeniedHandler;
@@ -73,6 +74,7 @@ public class SecurityConfig {
     SecurityFilterChain securityFilterChain(HttpSecurity http,
                                             JwtAuthenticationConverter jwtAuthConverter,
                                             CookieBearerTokenResolver bearerTokenResolver,
+                                            JwtIssuer jwtIssuer,
                                             ObjectMapper objectMapper) throws Exception {
         AuthenticationEntryPoint entryPoint = (req, res, ex) ->
                 writeError(res, objectMapper, HttpStatus.UNAUTHORIZED,
@@ -88,6 +90,7 @@ public class SecurityConfig {
                     .csrfTokenRequestHandler(new CsrfTokenRequestAttributeHandler())
                     .ignoringRequestMatchers(CSRF_EXEMPT_PATHS))
             .addFilterAfter(new CsrfCookieFilter(), CsrfFilter.class)
+            .addFilterAfter(new SessionRenewalFilter(jwtIssuer), BearerTokenAuthenticationFilter.class)
             .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
                     .requestMatchers(PUBLIC_PATHS).permitAll()
