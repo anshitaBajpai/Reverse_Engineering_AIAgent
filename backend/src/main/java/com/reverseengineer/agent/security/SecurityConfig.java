@@ -5,6 +5,7 @@ import com.nimbusds.jose.jwk.source.ImmutableSecret;
 import com.reverseengineer.agent.config.AppProperties;
 import com.reverseengineer.agent.exception.ApiErrorResponse;
 import com.reverseengineer.agent.service.SessionRegistry;
+import jakarta.servlet.DispatcherType;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -93,6 +94,10 @@ public class SecurityConfig {
             .addFilterAfter(new SessionRenewalFilter(jwtIssuer), BearerTokenAuthenticationFilter.class)
             .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
+                    // Streamed responses (/query/stream, /document/stream) finish with an
+                    // ASYNC re-dispatch of a request that was already authorized; checking
+                    // it again would fail after the response is committed.
+                    .dispatcherTypeMatchers(DispatcherType.ASYNC).permitAll()
                     .requestMatchers(PUBLIC_PATHS).permitAll()
                     .anyRequest().authenticated())
             .oauth2ResourceServer(oauth2 -> oauth2

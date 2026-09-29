@@ -81,14 +81,14 @@ public record AppProperties(
             Integer maxQueriesPerUser,
             Integer maxDocumentsPerUser
     ) {
-        /** {@code /query} calls allowed per user per UTC day (default 2; 0 = unlimited). */
+        /** {@code /query} calls allowed per user per UTC day (default 20; 0 = unlimited). */
         public int queriesLimit() {
-            return maxQueriesPerUser != null ? Math.max(0, maxQueriesPerUser) : 2;
+            return maxQueriesPerUser != null ? Math.max(0, maxQueriesPerUser) : 20;
         }
 
-        /** {@code /document} calls allowed per user per UTC day (default 2; 0 = unlimited). */
+        /** {@code /document} calls allowed per user per UTC day (default 3; 0 = unlimited). */
         public int documentsLimit() {
-            return maxDocumentsPerUser != null ? Math.max(0, maxDocumentsPerUser) : 2;
+            return maxDocumentsPerUser != null ? Math.max(0, maxDocumentsPerUser) : 3;
         }
     }
 

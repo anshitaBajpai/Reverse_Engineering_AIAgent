@@ -201,6 +201,17 @@ public class RagService {
 
     public Map<String, Object> askQuestion(String question, int k, List<String> projectIds,
                                             String identity, Long ownerId) {
+        return askQuestion(question, k, projectIds, identity, ownerId, ResponseListener.NONE);
+    }
+
+    /**
+     * Answers {@code question} from the owner's projects. The result holds
+     * {@code answer}, {@code sources} (formatted chunks) and {@code citations}
+     * (one link-ready map per source). {@code listener} hears the sources as soon
+     * as retrieval is done and then the answer as it streams.
+     */
+    public Map<String, Object> askQuestion(String question, int k, List<String> projectIds,
+                                            String identity, Long ownerId, ResponseListener listener) {
         requireIngested(ownerId);
         List<String> normalizedProjectIds = normalizeProjectIds(projectIds);
         requireKnownProjects(normalizedProjectIds, ownerId);
@@ -211,23 +222,39 @@ public class RagService {
         Optional<Map<String, Object>> cached = responseCache.get(cacheKey);
         if (cached.isPresent()) {
             log.info("Response cache hit for question.");
+            replay(cached.get(), "answer", listener);
             return cached.get();
         }
+        List<ProjectInfo> scopedProjects = registry.findByIdsForOwner(normalizedProjectIds, ownerId);
         List<Document> results = retrieve(question, effectiveK, normalizedProjectIds, ownerId, hybrid);
         List<String> formatted = results.stream().map(this::formatChunk).toList();
-        String context = repositoryOverview(
-                registry.findByIdsForOwner(normalizedProjectIds, ownerId),
-                QUESTION_TREE_ENTRIES, QUESTION_README_CHARS)
+        List<Map<String, Object>> citations = citations(results, scopedProjects);
+        listener.onSources(formatted, citations);
+        String context = repositoryOverview(scopedProjects, QUESTION_TREE_ENTRIES, QUESTION_README_CHARS)
                 + "\n\n## Retrieved Code Evidence\n"
                 + String.join("\n\n", formatted);
-        String answer  = llm.askLlm(question, context, identity);
-        Map<String, Object> response = Map.of("answer", answer, "sources", formatted);
+        String answer  = llm.askLlm(question, context, identity, listener);
+        Map<String, Object> response = Map.of(
+                "answer",    answer,
+                "sources",   formatted,
+                "citations", citations);
         responseCache.put(cacheKey, response);
         return response;
     }
 
     public Map<String, Object> generateDocument(String projectName, int k,
                                                  List<String> projectIds, String identity, Long ownerId) {
+        return generateDocument(projectName, k, projectIds, identity, ownerId, ResponseListener.NONE);
+    }
+
+    /**
+     * Writes the reverse-engineering document. The result holds {@code document},
+     * {@code chain_steps}, {@code sources} and {@code citations}. {@code listener}
+     * hears the sources, each chain step as it finishes, and the final document as
+     * it streams.
+     */
+    public Map<String, Object> generateDocument(String projectName, int k, List<String> projectIds,
+                                                 String identity, Long ownerId, ResponseListener listener) {
         requireIngested(ownerId);
         List<String> normalizedProjectIds = normalizeProjectIds(projectIds);
         requireKnownProjects(normalizedProjectIds, ownerId);
@@ -237,6 +264,7 @@ public class RagService {
         Optional<Map<String, Object>> cached = responseCache.get(cacheKey);
         if (cached.isPresent()) {
             log.info("Response cache hit for document.");
+            replay(cached.get(), "document", listener);
             return cached.get();
         }
 
@@ -248,19 +276,83 @@ public class RagService {
         List<ProjectInfo> scopedProjects = registry.findByIdsForOwner(normalizedProjectIds, ownerId);
 
         List<String> formatted = deduped.stream().map(this::formatChunk).toList();
+        List<Map<String, Object>> citations = citations(deduped, scopedProjects);
+        listener.onSources(formatted, citations);
         String context = repositoryOverview(scopedProjects, DOCUMENT_TREE_ENTRIES, DOCUMENT_README_CHARS)
                 + "\n\n## Retrieved Code Evidence\n"
                 + String.join("\n\n", formatted);
 
-        Map<String, Object> chainResult = llm.runReverseEngineeringChain(context, projectName, identity);
+        Map<String, Object> chainResult = llm.runReverseEngineeringChain(context, projectName, identity, listener);
 
         Map<String, Object> response = Map.of(
                 "document",    chainResult.get("document"),
                 "chain_steps", chainResult.get("chain_steps"),
-                "sources",     formatted
+                "sources",     formatted,
+                "citations",   citations
         );
         responseCache.put(cacheKey, response);
         return response;
+    }
+
+    /** Feeds a cached response to {@code listener} as if it had just been generated. */
+    @SuppressWarnings("unchecked")
+    private static void replay(Map<String, Object> cached, String textKey, ResponseListener listener) {
+        if (listener == ResponseListener.NONE) {
+            return;
+        }
+        listener.onSources(
+                (List<String>) cached.getOrDefault("sources", List.of()),
+                (List<Map<String, Object>>) cached.getOrDefault("citations", List.of()));
+        listener.onDelta(Objects.toString(cached.get(textKey), ""));
+    }
+
+    /**
+     * One map per retrieved chunk, in the same order as the formatted sources:
+     * {@code project_id}, {@code file_path}, {@code start_line}/{@code end_line}
+     * when known, and {@code url} when the host is linkable. Plain maps rather
+     * than a record so they survive the JSON round trip through the response cache.
+     */
+    static List<Map<String, Object>> citations(List<Document> documents, List<ProjectInfo> projects) {
+        Map<String, ProjectInfo> byId = new HashMap<>();
+        projects.forEach(project -> byId.put(project.projectId(), project));
+        List<Map<String, Object>> citations = new ArrayList<>(documents.size());
+        for (Document document : documents) {
+            Map<String, Object> meta = document.getMetadata();
+            String projectId = Objects.toString(meta.get("project_id"), null);
+            String filePath = Objects.toString(meta.get("file_path"), null);
+            Integer start = positiveInt(meta.get("start_line"));
+            Integer end = positiveInt(meta.get("end_line"));
+            Map<String, Object> citation = new LinkedHashMap<>();
+            citation.put("project_id", projectId);
+            citation.put("file_path", filePath);
+            if (start != null) {
+                citation.put("start_line", start);
+                citation.put("end_line", end != null ? end : start);
+            }
+            ProjectInfo project = byId.get(projectId);
+            String url = project == null ? null
+                    : SourceLinks.fileUrl(project.repoUrl(), project.lastCommitSha(), filePath, start, end);
+            if (url != null) {
+                citation.put("url", url);
+            }
+            citations.add(citation);
+        }
+        return citations;
+    }
+
+    private static Integer positiveInt(Object value) {
+        if (value instanceof Number number && number.intValue() > 0) {
+            return number.intValue();
+        }
+        if (value != null) {
+            try {
+                int parsed = Integer.parseInt(value.toString().trim());
+                return parsed > 0 ? parsed : null;
+            } catch (NumberFormatException ignored) {
+                // fall through
+            }
+        }
+        return null;
     }
 
     /**

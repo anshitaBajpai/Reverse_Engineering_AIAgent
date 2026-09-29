@@ -15,7 +15,7 @@ import java.time.ZoneOffset;
  * Enforces the per-user, per-day caps on the token-expensive endpoints.
  *
  * <p>Each user may run {@code /query} and {@code /document} a limited number of
- * times per UTC day (default 2 each); the counters live in {@code users} next to
+ * times per UTC day (default 20 questions, 3 documents); the counters live in {@code users} next to
  * {@code usage_period_date}, the day they belong to. The first request of a new
  * day resets both counters before the limit is applied.
  *

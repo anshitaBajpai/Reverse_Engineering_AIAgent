@@ -10,12 +10,15 @@ import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.stereotype.Service;
 
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.function.Consumer;
+import java.util.stream.Stream;
 
 @Service
 public class LlmService {
@@ -62,6 +65,11 @@ public class LlmService {
     }
 
     public String askLlm(String question, String context, String identity) {
+        return askLlm(question, context, identity, ResponseListener.NONE);
+    }
+
+    /** Answers {@code question}; streams the answer to {@code listener} unless it is {@link ResponseListener#NONE}. */
+    public String askLlm(String question, String context, String identity, ResponseListener listener) {
         AppProperties.Llm llm = props.llm();
         String userPrompt = """
                 Use the following code context to answer the question.
@@ -73,14 +81,23 @@ public class LlmService {
                 Question: %s""".formatted(context, question);
 
         log.info("Sending query to OpenAI ...");
-        String answer = chatCompletion(
+        String answer = complete(
                 QUERY_SYSTEM_PROMPT, userPrompt,
-                llm.queryTemperature(), llm.queryMaxTokens(), identity);
+                llm.queryTemperature(), llm.queryMaxTokens(), identity, listener);
         log.info("Received query response ({} chars).", answer.length());
         return answer;
     }
 
     public Map<String, Object> runReverseEngineeringChain(String context, String projectName, String identity) {
+        return runReverseEngineeringChain(context, projectName, identity, ResponseListener.NONE);
+    }
+
+    /**
+     * Runs the four-step document chain. {@code listener} hears each of the three
+     * parallel extraction steps as it finishes, then the synthesis text as it streams.
+     */
+    public Map<String, Object> runReverseEngineeringChain(String context, String projectName, String identity,
+                                                          ResponseListener listener) {
         AppProperties.Llm llm = props.llm();
 
         String architecturePrompt = """
@@ -146,22 +163,28 @@ public class LlmService {
         CompletableFuture<String> archFuture = CompletableFuture.supplyAsync(
                 () -> {
                     log.info("Chain step 1/4: architecture_extraction");
-                    return chatCompletion(CHAIN_SYSTEM_PROMPT, architecturePrompt,
+                    String findings = chatCompletion(CHAIN_SYSTEM_PROMPT, architecturePrompt,
                             llm.chainTemperature(), llm.chainMaxTokens(), identity);
+                    listener.onStep("architecture_extraction");
+                    return findings;
                 }, parallelExecutor);
 
         CompletableFuture<String> behavFuture = CompletableFuture.supplyAsync(
                 () -> {
                     log.info("Chain step 2/4: behavior_extraction");
-                    return chatCompletion(CHAIN_SYSTEM_PROMPT, behaviorPrompt,
+                    String findings = chatCompletion(CHAIN_SYSTEM_PROMPT, behaviorPrompt,
                             llm.chainTemperature(), llm.chainMaxTokens(), identity);
+                    listener.onStep("behavior_extraction");
+                    return findings;
                 }, parallelExecutor);
 
         CompletableFuture<String> riskFuture = CompletableFuture.supplyAsync(
                 () -> {
                     log.info("Chain step 3/4: risk_extraction");
-                    return chatCompletion(CHAIN_SYSTEM_PROMPT, riskPrompt,
+                    String findings = chatCompletion(CHAIN_SYSTEM_PROMPT, riskPrompt,
                             llm.chainTemperature(), llm.chainMaxTokens(), identity);
+                    listener.onStep("risk_extraction");
+                    return findings;
                 }, parallelExecutor);
 
         String architectureFindings, behaviorFindings, riskFindings;
@@ -240,9 +263,9 @@ public class LlmService {
                         architectureFindings, behaviorFindings, riskFindings, context);
 
         log.info("Chain step 4/4: final_synthesis");
-        String document = chatCompletion(
+        String document = complete(
                 CHAIN_SYSTEM_PROMPT, synthesisPrompt,
-                llm.synthesisTemperature(), llm.synthesisMaxTokens(), identity);
+                llm.synthesisTemperature(), llm.synthesisMaxTokens(), identity, listener);
         log.info("Generated document ({} chars).", document.length());
 
         List<Map<String, String>> chainSteps = List.of(
@@ -266,15 +289,33 @@ public class LlmService {
     /** Rough chars-per-token heuristic used only to size the pre-call reservation. */
     private static final int CHARS_PER_TOKEN_ESTIMATE = 4;
 
-    private String chatCompletion(String systemPrompt, String userPrompt,
-                                   double temperature, int maxTokens, String identity) {
-        // Reserve worst-case spend (estimated prompt size + the completion cap) atomically
-        // before calling OpenAI, so concurrent/chained calls can't all pass a stale budget
-        // check and blow past it before any of them records real usage. See reserve()/adjust().
+    /** Streams when someone is listening, otherwise makes a plain blocking call. */
+    private String complete(String systemPrompt, String userPrompt, double temperature,
+                            int maxTokens, String identity, ResponseListener listener) {
+        return listener == ResponseListener.NONE
+                ? chatCompletion(systemPrompt, userPrompt, temperature, maxTokens, identity)
+                : streamCompletion(systemPrompt, userPrompt, temperature, maxTokens, identity,
+                        listener::onDelta);
+    }
+
+    /**
+     * Reserves worst-case spend (estimated prompt size + the completion cap) atomically
+     * before calling OpenAI, so concurrent/chained calls can't all pass a stale budget
+     * check and blow past it before any of them records real usage. See reserve()/adjust().
+     *
+     * @return the reserved token count, to settle with {@code usageGuard.adjust} afterwards
+     */
+    private long reserveTokens(String systemPrompt, String userPrompt, int maxTokens, String identity) {
         long estimatedPromptTokens = Math.ceilDiv(
                 (long) systemPrompt.length() + userPrompt.length(), CHARS_PER_TOKEN_ESTIMATE);
         long estimatedTokens = estimatedPromptTokens + maxTokens;
         usageGuard.reserve(identity, estimatedTokens);
+        return estimatedTokens;
+    }
+
+    private String chatCompletion(String systemPrompt, String userPrompt,
+                                   double temperature, int maxTokens, String identity) {
+        long estimatedTokens = reserveTokens(systemPrompt, userPrompt, maxTokens, identity);
 
         var options = OpenAiChatOptions.builder()
                 .temperature(temperature)
@@ -300,5 +341,66 @@ public class LlmService {
         usageGuard.adjust(identity, actualTokens - estimatedTokens);
 
         return response.getResult().getOutput().getText();
+    }
+
+    /**
+     * Like {@link #chatCompletion}, but passes each text fragment to {@code onDelta}
+     * as OpenAI produces it and returns the full text at the end.
+     *
+     * <p>If {@code onDelta} throws (e.g. the client disconnected), the OpenAI stream
+     * is cancelled and the exception propagates. Usage is settled from the final
+     * usage chunk; when it is missing, or the stream stopped part-way, the
+     * worst-case reservation is kept rather than guessing low.</p>
+     */
+    private String streamCompletion(String systemPrompt, String userPrompt, double temperature,
+                                    int maxTokens, String identity, Consumer<String> onDelta) {
+        long estimatedTokens = reserveTokens(systemPrompt, userPrompt, maxTokens, identity);
+
+        var options = OpenAiChatOptions.builder()
+                .temperature(temperature)
+                .maxTokens(maxTokens)
+                .streamUsage(true)
+                .build();
+
+        StringBuilder text = new StringBuilder();
+        long actualTokens = 0;
+        // Closing the stream cancels the upstream subscription, so an abandoned
+        // response stops generating (and billing) right away.
+        try (Stream<ChatResponse> chunks = chatClient.prompt()
+                .options(options)
+                .system(systemPrompt)
+                .user(userPrompt)
+                .stream()
+                .chatResponse()
+                .toStream()) {
+            for (Iterator<ChatResponse> it = chunks.iterator(); it.hasNext(); ) {
+                ChatResponse chunk = it.next();
+                actualTokens = Math.max(actualTokens, totalTokens(chunk));
+                String delta = chunk.getResult() != null && chunk.getResult().getOutput() != null
+                        ? chunk.getResult().getOutput().getText() : null;
+                if (delta != null && !delta.isEmpty()) {
+                    text.append(delta);
+                    onDelta.accept(delta);
+                }
+            }
+        } catch (RuntimeException e) {
+            if (text.isEmpty()) {
+                usageGuard.adjust(identity, -estimatedTokens); // failed before generating anything
+            }
+            throw e;
+        }
+        if (actualTokens > 0) {
+            usageGuard.adjust(identity, actualTokens - estimatedTokens);
+        }
+        return text.toString();
+    }
+
+    private static long totalTokens(ChatResponse chunk) {
+        Usage usage = chunk.getMetadata() != null ? chunk.getMetadata().getUsage() : null;
+        if (usage == null) {
+            return 0;
+        }
+        return (usage.getPromptTokens() != null ? usage.getPromptTokens() : 0)
+                + (usage.getCompletionTokens() != null ? usage.getCompletionTokens() : 0);
     }
 }

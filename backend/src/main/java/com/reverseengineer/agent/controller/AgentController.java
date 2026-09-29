@@ -5,16 +5,24 @@ import com.reverseengineer.agent.exception.UsageBudgetExceededException;
 import com.reverseengineer.agent.model.*;
 import com.reverseengineer.agent.security.CurrentUser;
 import com.reverseengineer.agent.service.*;
+import jakarta.annotation.PreDestroy;
+import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.net.URI;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.function.Function;
 import java.util.regex.Pattern;
 
 import static org.springframework.http.HttpStatus.*;
@@ -24,6 +32,8 @@ public class AgentController {
 
     private static final Logger log = LoggerFactory.getLogger(AgentController.class);
     private static final Pattern CONTROL_CHARS = Pattern.compile("[\\x00-\\x1f\\x7f]+");
+    /** Upper bound for one streamed response; a document chain can take several minutes. */
+    private static final Duration STREAM_TIMEOUT = Duration.ofMinutes(10);
 
     private final RagService ragService;
     private final AppProperties props;
@@ -33,6 +43,8 @@ public class AgentController {
     private final AsyncJobService asyncJobs;
     private final UsageGuardService usageGuard;
     private final UserQuotaService userQuota;
+    /** Runs streamed questions/documents off the request thread; each blocks on OpenAI. */
+    private final ExecutorService streamExecutor = Executors.newVirtualThreadPerTaskExecutor();
 
     public AgentController(RagService ragService,
                            AppProperties props,
@@ -50,6 +62,11 @@ public class AgentController {
         this.asyncJobs    = asyncJobs;
         this.usageGuard   = usageGuard;
         this.userQuota    = userQuota;
+    }
+
+    @PreDestroy
+    void close() {
+        streamExecutor.close();
     }
 
     @GetMapping("/health")
@@ -123,23 +140,13 @@ public class AgentController {
     public ResponseEntity<QueryResponse> query(@Valid @RequestBody QueryRequest body) {
         long ownerId = CurrentUser.id();
         String identity = CurrentUser.identity();
-        checkRateLimit(identity, RateLimiterService.Endpoint.QUERY);
-        checkUsageBudget(identity);
-        int k = Math.min(body.k(), props.maxQueryK());
-
-        if (body.question().length() > props.maxQuestionLength()) {
-            throw new ResponseStatusException(BAD_REQUEST,
-                    "question exceeds maximum length of " + props.maxQuestionLength());
-        }
+        int k = checkQuery(body, identity);
 
         userQuota.reserveQuery(ownerId);
         try {
             Map<String, Object> result = ragService.askQuestion(
                     body.question(), k, body.projectIds(), identity, ownerId);
-            @SuppressWarnings("unchecked")
-            List<String> sources = (List<String>) result.get("sources");
-            return ResponseEntity.ok(new QueryResponse(
-                    (String) result.get("answer"), sources));
+            return ResponseEntity.ok(toQueryResponse(result));
         } catch (IllegalArgumentException e) {
             userQuota.refundQuery(ownerId);
             throw new ResponseStatusException(BAD_REQUEST, e.getMessage());
@@ -157,32 +164,14 @@ public class AgentController {
     public ResponseEntity<DocumentResponse> document(@Valid @RequestBody DocumentRequest body) {
         long ownerId = CurrentUser.id();
         String identity = CurrentUser.identity();
-        checkRateLimit(identity, RateLimiterService.Endpoint.DOCUMENT);
-        checkUsageBudget(identity);
-
-        String projectName = CONTROL_CHARS.matcher(body.projectName()).replaceAll(" ")
-                .replaceAll(" {2,}", " ").strip();
-        if (projectName.isEmpty()) {
-            throw new ResponseStatusException(BAD_REQUEST,
-                    "project_name must contain printable characters.");
-        }
-        if (projectName.length() > props.maxProjectNameLength()) {
-            projectName = projectName.substring(0, props.maxProjectNameLength());
-        }
-
+        String projectName = checkDocument(body, identity);
         int k = Math.min(body.k(), props.maxDocumentK());
 
         userQuota.reserveDocument(ownerId);
         try {
             Map<String, Object> result = ragService.generateDocument(
                     projectName, k, body.projectIds(), identity, ownerId);
-            @SuppressWarnings("unchecked")
-            List<Map<String, String>> chainSteps =
-                    (List<Map<String, String>>) result.get("chain_steps");
-            @SuppressWarnings("unchecked")
-            List<String> sources = (List<String>) result.get("sources");
-            return ResponseEntity.ok(new DocumentResponse(
-                    (String) result.get("document"), chainSteps, sources));
+            return ResponseEntity.ok(toDocumentResponse(result));
         } catch (IllegalArgumentException e) {
             userQuota.refundDocument(ownerId);
             throw new ResponseStatusException(BAD_REQUEST, e.getMessage());
@@ -195,6 +184,118 @@ public class AgentController {
             throw new ResponseStatusException(INTERNAL_SERVER_ERROR,
                     "Document generation failed.");
         }
+    }
+
+    /**
+     * {@code /query} as server-sent events: the answer arrives as it is written.
+     * Validation, rate limits and quota are checked up front, so those failures
+     * are ordinary JSON error responses; later failures arrive as an {@code error}
+     * event. See {@link SseResponseStream} for the event format.
+     */
+    @PostMapping("/query/stream")
+    public SseEmitter queryStream(@Valid @RequestBody QueryRequest body, HttpServletResponse response) {
+        long ownerId = CurrentUser.id();
+        String identity = CurrentUser.identity();
+        int k = checkQuery(body, identity);
+
+        userQuota.reserveQuery(ownerId);
+        return stream(response, "Query", () -> userQuota.refundQuery(ownerId), listener ->
+                toQueryResponse(ragService.askQuestion(
+                        body.question(), k, body.projectIds(), identity, ownerId, listener)));
+    }
+
+    /** {@code /document} as server-sent events; see {@link #queryStream}. */
+    @PostMapping("/document/stream")
+    public SseEmitter documentStream(@Valid @RequestBody DocumentRequest body, HttpServletResponse response) {
+        long ownerId = CurrentUser.id();
+        String identity = CurrentUser.identity();
+        String projectName = checkDocument(body, identity);
+        int k = Math.min(body.k(), props.maxDocumentK());
+
+        userQuota.reserveDocument(ownerId);
+        return stream(response, "Document generation", () -> userQuota.refundDocument(ownerId), listener ->
+                toDocumentResponse(ragService.generateDocument(
+                        projectName, k, body.projectIds(), identity, ownerId, listener)));
+    }
+
+    /**
+     * Runs {@code work} on a background thread, streaming its progress. The quota
+     * slot is refunded on failure, and on disconnect only if no text had reached
+     * the client yet (otherwise the tokens were already spent on the user's behalf).
+     */
+    private SseEmitter stream(HttpServletResponse response, String label, Runnable refund,
+                              Function<SseResponseStream, Object> work) {
+        // Keep reverse proxies (nginx, Render) from buffering the stream.
+        response.setHeader("Cache-Control", "no-cache");
+        response.setHeader("X-Accel-Buffering", "no");
+
+        SseEmitter emitter = new SseEmitter(STREAM_TIMEOUT.toMillis());
+        SseResponseStream events = new SseResponseStream(emitter);
+        Map<String, String> mdc = MDC.getCopyOfContextMap();
+        streamExecutor.execute(() -> {
+            if (mdc != null) MDC.setContextMap(mdc);
+            try {
+                events.done(work.apply(events));
+            } catch (SseResponseStream.ClientGoneException e) {
+                log.info("{} stream abandoned by client.", label);
+                if (!events.hasSentText()) refund.run();
+            } catch (IllegalArgumentException | UsageBudgetExceededException e) {
+                refund.run();
+                events.fail(e.getMessage());
+            } catch (RuntimeException e) {
+                refund.run();
+                log.error("{} failed", label, e);
+                events.fail(label + " failed.");
+            } finally {
+                MDC.clear();
+            }
+        });
+        return emitter;
+    }
+
+    /** Rate limit, budget and length checks for a question; returns the effective k. */
+    private int checkQuery(QueryRequest body, String identity) {
+        checkRateLimit(identity, RateLimiterService.Endpoint.QUERY);
+        checkUsageBudget(identity);
+        if (body.question().length() > props.maxQuestionLength()) {
+            throw new ResponseStatusException(BAD_REQUEST,
+                    "question exceeds maximum length of " + props.maxQuestionLength());
+        }
+        return Math.min(body.k(), props.maxQueryK());
+    }
+
+    /** Rate limit and budget checks for a document; returns the sanitized project name. */
+    private String checkDocument(DocumentRequest body, String identity) {
+        checkRateLimit(identity, RateLimiterService.Endpoint.DOCUMENT);
+        checkUsageBudget(identity);
+
+        String projectName = CONTROL_CHARS.matcher(body.projectName()).replaceAll(" ")
+                .replaceAll(" {2,}", " ").strip();
+        if (projectName.isEmpty()) {
+            throw new ResponseStatusException(BAD_REQUEST,
+                    "project_name must contain printable characters.");
+        }
+        if (projectName.length() > props.maxProjectNameLength()) {
+            projectName = projectName.substring(0, props.maxProjectNameLength());
+        }
+        return projectName;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static QueryResponse toQueryResponse(Map<String, Object> result) {
+        return new QueryResponse(
+                (String) result.get("answer"),
+                (List<String>) result.get("sources"),
+                (List<Map<String, Object>>) result.getOrDefault("citations", List.of()));
+    }
+
+    @SuppressWarnings("unchecked")
+    private static DocumentResponse toDocumentResponse(Map<String, Object> result) {
+        return new DocumentResponse(
+                (String) result.get("document"),
+                (List<Map<String, String>>) result.get("chain_steps"),
+                (List<String>) result.get("sources"),
+                (List<Map<String, Object>>) result.getOrDefault("citations", List.of()));
     }
 
     @GetMapping("/projects")
