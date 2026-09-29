@@ -1,7 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import logoUrl from "./Logo.png";
+import { useCallback, useEffect, useState } from "react";
 import {
   API_BASE_URL,
   AUTH_EVENT,
@@ -9,245 +6,29 @@ import {
   fetchMe,
   getStoredUser,
   ingestRepositoryAsync,
-  login,
   logout,
-  register,
   requestJson,
 } from "./apiClient.js";
-
-const shortSha = (sha) => (sha ? sha.slice(0, 7) : "Unknown");
-const escapeFilename = (value) =>
-  String(value)
-    .trim()
-    .replace(/[\\/:*?"<>|]+/g, "-")
-    .slice(0, 80);
-
-function parseMarkdownBlocks(markdown) {
-  const lines = String(markdown).split(/\r?\n/);
-  const blocks = [];
-  let i = 0;
-
-  while (i < lines.length) {
-    const line = lines[i];
-
-    if (!line.trim()) {
-      i += 1;
-      continue;
-    }
-
-    if (line.startsWith("```")) {
-      const lang = line.slice(3).trim().toLowerCase();
-      const codeLines = [];
-      i += 1;
-      while (i < lines.length && !lines[i].startsWith("```")) {
-        codeLines.push(lines[i]);
-        i += 1;
-      }
-      blocks.push({ type: "code", lang, text: codeLines.join("\n") });
-      i += 1;
-      continue;
-    }
-
-    const headingMatch = line.match(/^(#{1,3})\s+(.*)$/);
-    if (headingMatch) {
-      blocks.push({
-        type: "heading",
-        level: headingMatch[1].length,
-        text: headingMatch[2].trim(),
-      });
-      i += 1;
-      continue;
-    }
-
-    if (line.includes("|")) {
-      const tableRows = [];
-      let hasSeparator = false;
-      while (i < lines.length && lines[i].includes("|")) {
-        const currentLine = lines[i].trim();
-        if (!currentLine) break;
-        if (/^\|?[\s:-]+\|[\s|:-]*$/.test(currentLine)) {
-          hasSeparator = true;
-        } else {
-          const cells = currentLine
-            .replace(/^\|/, "")
-            .replace(/\|$/, "")
-            .split("|")
-            .map((cell) => cell.trim());
-          tableRows.push(cells);
-        }
-        i += 1;
-      }
-      if (hasSeparator && tableRows.length >= 2) {
-        blocks.push({ type: "table", rows: tableRows });
-        continue;
-      }
-      i -= tableRows.length ? 0 : 0;
-    }
-
-    const listMatch = line.match(/^[-*+]\s+(.*)$/);
-    if (listMatch) {
-      const items = [];
-      while (i < lines.length) {
-        const itemMatch = lines[i].match(/^[-*+]\s+(.*)$/);
-        if (!itemMatch) break;
-        items.push(itemMatch[1].trim());
-        i += 1;
-      }
-      blocks.push({ type: "list", items });
-      continue;
-    }
-
-    const paragraphLines = [line.trim()];
-    i += 1;
-    while (i < lines.length && lines[i].trim()) {
-      if (
-        lines[i].startsWith("```") ||
-        lines[i].match(/^(#{1,3})\s+(.*)$/) ||
-        lines[i].match(/^[-*+]\s+(.*)$/)
-      ) {
-        break;
-      }
-      paragraphLines.push(lines[i].trim());
-      i += 1;
-    }
-    blocks.push({ type: "paragraph", text: paragraphLines.join(" ") });
-  }
-
-  return blocks;
-}
-
-function formatSourceRows(sources = []) {
-  return sources.map((source, index) => ({
-    index: index + 1,
-    text: String(source),
-  }));
-}
-
-function stripMarkdownMarkers(text) {
-  return String(text)
-    .replace(/\*\*(.+?)\*\*/g, "$1")
-    .replace(/__(.+?)__/g, "$1")
-    .replace(/(?<!\w)\*(?!\s)([^*\n]+?)(?<!\s)\*(?!\w)/g, "$1")
-    .replace(/_(.+?)_/g, "$1")
-    .replace(/`(.+?)`/g, "$1")
-    .replace(/^\s*>\s?/gm, "")
-    .trim();
-}
-
-function normalizeDocumentControl(markdown, projectName = "this codebase") {
-  const text = String(markdown || "");
-  if (!text.includes("## Document Control")) {
-    return text;
-  }
-
-  const replacement = (rows = []) => {
-    const defaultRows = [
-      `Provide a comprehensive overview of ${projectName} for maintenance and future development.`,
-      "Repository structure, source files, and README documentation.",
-      "High",
-    ];
-    const values = defaultRows.map((fallback, index) =>
-      rows[index] && rows[index].trim() ? rows[index].trim() : fallback,
-    );
-
-    return [
-      "## Document Control",
-      "",
-      "| Document Purpose | Source Basis | Confidence Level |",
-      "| --- | --- | --- |",
-      `| ${values[0]} | ${values[1]} | ${values[2]} |`,
-      "",
-    ].join("\n");
-  };
-
-  const sectionMatch = text.match(
-    /## Document Control([\s\S]*?)(?=\n## |\n# |\s*$)/,
-  );
-  if (!sectionMatch) return text;
-
-  const sectionBody = sectionMatch[1];
-  const tableRows = sectionBody
-    .split(/\r?\n/)
-    .filter((line) => line.includes("|"))
-    .map((line) =>
-      line
-        .replace(/^\|/, "")
-        .replace(/\|$/, "")
-        .split("|")
-        .map((cell) => cell.trim()),
-    )
-    .filter((row) => row.length > 1 && !row.every((cell) => /^-+$/.test(cell)));
-
-  const valueLines =
-    tableRows.length >= 2
-      ? tableRows[1]
-      : sectionBody
-          .split(/\r?\n/)
-          .map((line) => line.trim())
-          .filter(Boolean)
-          .filter((line) => !line.startsWith("#"))
-          .slice(0, 3);
-
-  return text.replace(
-    /## Document Control[\s\S]*?(?=\n## |\n# |\s*$)/,
-    replacement(valueLines),
-  );
-}
-
-function normalizeDocumentSections(markdown) {
-  const text = String(markdown || "");
-  const sections = [
-    "Executive Summary",
-    "Scope And Methodology",
-    "High-Level System Context",
-    "Technology Stack",
-    "Repository And Module Structure",
-    "Component Inventory",
-    "Runtime Behavior And Control Flow",
-    "Data Flow And State Management",
-    "API Surface And Interfaces",
-    "Configuration, Environment, And Deployment",
-    "Dependencies And External Integrations",
-    "Security And Privacy Review",
-    "Operational Risks And Failure Modes",
-    "Maintainability Assessment",
-    "Unknowns And Assumptions",
-    "Recommended Next Steps",
-    "Evidence Index",
-  ];
-
-  let normalized = text.replace(
-    /^(#{2,3})\s+(.+?)\s*$/gm,
-    (match, hashes, title) => `${hashes} ${title.trim()}`,
-  );
-
-  sections.forEach((section) => {
-    const pattern = new RegExp(
-      `(^##\\s+${section.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*$)`,
-      "m",
-    );
-    normalized = normalized.replace(pattern, "\n$1\n");
-  });
-
-  return normalized.replace(/\n{3,}/g, "\n\n");
-}
+import { isExhausted } from "./lib/format.js";
+import { useStreamingResult } from "./hooks/useStreamingResult.js";
+import AppHeader from "./components/AppHeader.jsx";
+import AskPanel from "./components/AskPanel.jsx";
+import AuthView from "./components/AuthView.jsx";
+import ConfirmModal from "./components/ConfirmModal.jsx";
+import DocumentPanel from "./components/DocumentPanel.jsx";
+import IngestPanel from "./components/IngestPanel.jsx";
+import ProjectBar from "./components/ProjectBar.jsx";
+import ResultPanel from "./components/ResultPanel.jsx";
+import UpdateCard from "./components/UpdateCard.jsx";
 
 function App() {
   const [backendStatus, setBackendStatus] = useState("checking");
   const [projects, setProjects] = useState([]);
   const [selectedProjectId, setSelectedProjectId] = useState("");
-  const [repoUrl, setRepoUrl] = useState("");
-  const [question, setQuestion] = useState("");
-  const [documentName, setDocumentName] = useState("");
-  const [answer, setAnswer] = useState(null);
-  const [document, setDocument] = useState(null);
   const [projectStatus, setProjectStatus] = useState(null);
   const [notice, setNotice] = useState(null);
   const [busyAction, setBusyAction] = useState("");
   const [ingestStage, setIngestStage] = useState("");
-  const [resultTab, setResultTab] = useState("main");
-  const [projectPickerOpen, setProjectPickerOpen] = useState(false);
-  const projectPickerRef = useRef(null);
   // The session lives in an httpOnly cookie the JS layer can't read, so this is only an
   // optimistic guess from the last login to avoid a login-screen flash — refreshQuota()
   // below verifies it against the server and onUnauthorized rolls it back on a 401.
@@ -255,18 +36,25 @@ function App() {
   const [authUser, setAuthUser] = useState(() => getStoredUser());
   const [quota, setQuota] = useState(null);
   const [confirmingProjectDelete, setConfirmingProjectDelete] = useState(false);
+  const { result, run, stop, clear: clearResult } = useStreamingResult();
+
+  const showNotice = useCallback((type, message) => setNotice({ type, message }), []);
+  const selectedProject = projects.find((project) => project.project_id === selectedProjectId);
+  const isBackendOnline = backendStatus === "online";
+
+  const resetSession = useCallback(() => {
+    setAuthed(false);
+    setAuthUser(null);
+    setQuota(null);
+    setProjects([]);
+    setSelectedProjectId("");
+    clearResult();
+  }, [clearResult]);
 
   useEffect(() => {
-    const onUnauthorized = () => {
-      setAuthed(false);
-      setAuthUser(null);
-      setQuota(null);
-      setProjects([]);
-      setSelectedProjectId("");
-    };
-    window.addEventListener(AUTH_EVENT, onUnauthorized);
-    return () => window.removeEventListener(AUTH_EVENT, onUnauthorized);
-  }, []);
+    window.addEventListener(AUTH_EVENT, resetSession);
+    return () => window.removeEventListener(AUTH_EVENT, resetSession);
+  }, [resetSession]);
 
   const refreshQuota = useCallback(() => {
     fetchMe()
@@ -277,59 +65,6 @@ function App() {
   useEffect(() => {
     if (authed) refreshQuota();
   }, [authed, refreshQuota]);
-
-  const queriesExhausted =
-    !!quota &&
-    quota.queries_limit > 0 &&
-    quota.queries_used >= quota.queries_limit;
-  const documentsExhausted =
-    !!quota &&
-    quota.documents_limit > 0 &&
-    quota.documents_used >= quota.documents_limit;
-
-  const isBackendOnline = backendStatus === "online";
-  const selectedProject = projects.find(
-    (project) => project.project_id === selectedProjectId,
-  );
-  const normalizedDocument = normalizeDocumentControl(
-    normalizeDocumentSections(document?.document),
-    documentName || selectedProject?.repo_url || "this codebase",
-  );
-  const markdownComponents = useMemo(
-    () => ({
-      table: ({ children }) => (
-        <div className="markdown-table-wrap">
-          <table className="markdown-table">{children}</table>
-        </div>
-      ),
-      th: ({ children }) => <th>{children}</th>,
-      td: ({ children }) => <td>{children}</td>,
-      tr: ({ children }) => <tr>{children}</tr>,
-      code: ({ className, children, ...props }) => (
-        <code className={className} {...props}>
-          {children}
-        </code>
-      ),
-    }),
-    [],
-  );
-
-  const showNotice = (type, message) => setNotice({ type, message });
-  const projectIds = selectedProjectId ? [selectedProjectId] : [];
-
-  useEffect(() => {
-    const onPointerDown = (event) => {
-      if (
-        projectPickerRef.current &&
-        !projectPickerRef.current.contains(event.target)
-      ) {
-        setProjectPickerOpen(false);
-      }
-    };
-
-    window.addEventListener("pointerdown", onPointerDown);
-    return () => window.removeEventListener("pointerdown", onPointerDown);
-  }, []);
 
   const loadProjects = useCallback(async () => {
     const data = await requestJson("/projects");
@@ -367,15 +102,22 @@ function App() {
     };
   }, [loadProjects, authed]);
 
-  async function ingestRepository(event) {
-    event.preventDefault();
-    if (!repoUrl.trim())
-      return showNotice("error", "Enter a GitHub repository URL first.");
+  function selectProject(projectId) {
+    setSelectedProjectId(projectId);
+    setProjectStatus(null);
+    clearResult();
+  }
+
+  async function ingestRepository(repoUrl) {
+    if (!repoUrl.trim()) {
+      showNotice("error", "Enter a GitHub repository URL first.");
+      return false;
+    }
     setBusyAction("ingest");
     setIngestStage("Starting repository analysis…");
     setNotice(null);
     try {
-      const result = await ingestRepositoryAsync(repoUrl, {
+      const ingested = await ingestRepositoryAsync(repoUrl, {
         onJobUpdate: (job) =>
           setIngestStage(
             job.status === "RUNNING"
@@ -384,308 +126,59 @@ function App() {
           ),
       });
       await loadProjects();
-      setSelectedProjectId(result?.project_id || "");
-      setRepoUrl("");
+      setSelectedProjectId(ingested?.project_id || "");
       showNotice(
         "success",
-        `Repository ready: ${result?.files_loaded ?? 0} files and ${result?.chunks_created ?? 0} code chunks indexed.`,
+        `Repository ready: ${ingested?.files_loaded ?? 0} files and ${ingested?.chunks_created ?? 0} code chunks indexed.`,
       );
+      return true;
     } catch (error) {
       showNotice("error", error.message);
+      return false;
     } finally {
       setBusyAction("");
       setIngestStage("");
     }
   }
 
-  async function askQuestion(event) {
-    event.preventDefault();
-    if (!question.trim())
-      return showNotice("error", "Write a question before asking the agent.");
-    if (!selectedProjectId)
-      return showNotice(
-        "error",
-        "Ingest and select a project before asking a question.",
-      );
-    if (queriesExhausted)
-      return showNotice(
-        "error",
-        "You've used all your questions for today. The limit resets tomorrow.",
-      );
-    setBusyAction("ask");
+  /** Streams an answer or document into the result panel; quota is re-read afterwards. */
+  async function streamResult(action, request) {
+    setBusyAction(action);
     setNotice(null);
-    setDocument(null);
-    setResultTab("main");
-    try {
-      const result = await requestJson("/query", {
-        method: "POST",
-        body: { question, k: 5, project_ids: projectIds },
-      });
-      setAnswer(result);
-      refreshQuota();
-    } catch (error) {
-      showNotice("error", error.message);
-    } finally {
-      setBusyAction("");
-    }
+    const outcome = await run(request);
+    if (outcome.error) showNotice("error", outcome.error.message);
+    setBusyAction("");
+    refreshQuota();
   }
 
-  async function generateDocument(event) {
-    event.preventDefault();
+  function askQuestion(question) {
+    if (!question.trim()) return showNotice("error", "Write a question before asking the agent.");
     if (!selectedProjectId)
-      return showNotice(
-        "error",
-        "Ingest and select a project before generating a document.",
-      );
-    if (documentsExhausted)
+      return showNotice("error", "Ingest and select a project before asking a question.");
+    if (isExhausted(quota?.queries_used, quota?.queries_limit))
+      return showNotice("error", "You've used all your questions for today. The limit resets tomorrow.");
+    return streamResult("ask", {
+      kind: "answer",
+      path: "/query/stream",
+      body: { question, k: 5, project_ids: [selectedProjectId] },
+    });
+  }
+
+  function generateDocument(title) {
+    if (!selectedProjectId)
+      return showNotice("error", "Ingest and select a project before generating a document.");
+    if (isExhausted(quota?.documents_used, quota?.documents_limit))
       return showNotice(
         "error",
         "You've used all your technical documents for today. The limit resets tomorrow.",
       );
-    setBusyAction("document");
-    setNotice(null);
-    setAnswer(null);
-    setResultTab("main");
-    try {
-      const result = await requestJson("/document", {
-        method: "POST",
-        body: {
-          project_name:
-            documentName || selectedProject?.repo_url || "Ingested Repository",
-          k: 25,
-          project_ids: projectIds,
-        },
-      });
-      setDocument(result);
-      refreshQuota();
-    } catch (error) {
-      showNotice("error", error.message);
-    } finally {
-      setBusyAction("");
-    }
-  }
-
-  async function downloadDocumentPdf() {
-    const content = document?.document || "";
-    const normalizedContent = normalizeDocumentControl(
-      normalizeDocumentSections(content),
-      documentName || selectedProject?.repo_url || "this codebase",
-    );
-    if (!normalizedContent.trim()) {
-      showNotice(
-        "error",
-        "Generate a technical document before downloading a PDF.",
-      );
-      return;
-    }
-
-    const { jsPDF } = await import("jspdf");
-    const displayTitle =
-      documentName || selectedProject?.repo_url || "Technical Document";
-    const title = escapeFilename(displayTitle);
-    const doc = new jsPDF({ unit: "pt", format: "a4" });
-    const pageWidth = doc.internal.pageSize.getWidth();
-    const pageHeight = doc.internal.pageSize.getHeight();
-    const margin = 40;
-    const maxWidth = pageWidth - margin * 2;
-    const lineHeight = 14;
-    const paragraphGap = 8;
-    const BRAND = [124, 140, 255];
-    const BRAND2 = [90, 215, 255];
-    const INK = [17, 24, 39];
-    const MUTED = [107, 114, 128];
-    let cursorY = margin;
-    let pageNumber = 1;
-
-    const drawPageChrome = () => {
-      doc.setFillColor(...BRAND2);
-      doc.rect(0, 0, pageWidth, 4, "F");
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(8);
-      doc.setTextColor(...MUTED);
-      doc.text(displayTitle, margin, 22);
-    };
-    drawPageChrome();
-
-    const ensureSpace = (needed = lineHeight) => {
-      if (cursorY + needed > pageHeight - margin) {
-        doc.addPage();
-        drawPageChrome();
-        cursorY = margin;
-        pageNumber += 1;
-      }
-    };
-
-    const writeWrapped = (text, fontSize = 11, options = {}) => {
-      doc.setFont("helvetica", options.bold ? "bold" : "normal");
-      doc.setFontSize(fontSize);
-      doc.setTextColor(...(options.color || INK));
-      const lines = doc.splitTextToSize(String(text), maxWidth);
-      ensureSpace(lines.length * lineHeight);
-      lines.forEach((line) => {
-        if (cursorY > pageHeight - margin) {
-          doc.addPage();
-          drawPageChrome();
-          cursorY = margin;
-          pageNumber += 1;
-        }
-        doc.text(line, options.indent || margin, cursorY);
-        cursorY += lineHeight;
-      });
-      cursorY += options.afterGap || 0;
-    };
-
-    const blocks = parseMarkdownBlocks(normalizedContent);
-
-    blocks.forEach((block) => {
-      if (block.type === "heading") {
-        const sizeByLevel = { 1: 16, 2: 13, 3: 12 };
-        const afterGap = block.level === 1 ? 9 : 5;
-        writeWrapped(
-          stripMarkdownMarkers(block.text),
-          sizeByLevel[block.level] || 12,
-          {
-            bold: true,
-            color: BRAND,
-            afterGap,
-          },
-        );
-        if (block.level === 1) {
-          doc.setDrawColor(...BRAND2);
-          doc.setLineWidth(1.2);
-          doc.line(
-            margin,
-            cursorY - afterGap + 3,
-            pageWidth - margin,
-            cursorY - afterGap + 3,
-          );
-        }
-        return;
-      }
-
-      if (block.type === "paragraph") {
-        writeWrapped(stripMarkdownMarkers(block.text), 11, {
-          afterGap: paragraphGap,
-        });
-        return;
-      }
-
-      if (block.type === "list") {
-        block.items.forEach((item) => {
-          writeWrapped(`• ${stripMarkdownMarkers(item)}`, 11, {
-            indent: margin + 12,
-            afterGap: 2,
-          });
-        });
-        cursorY += paragraphGap;
-        return;
-      }
-
-      if (block.type === "table") {
-        const rows = block.rows;
-        const colCount = Math.max(...rows.map((row) => row.length));
-        const usableWidth = maxWidth;
-        const firstColWidth = Math.min(160, usableWidth * 0.34);
-        const remainingWidth = usableWidth - firstColWidth;
-        const otherColWidth =
-          colCount > 1
-            ? remainingWidth / Math.max(1, colCount - 1)
-            : remainingWidth;
-        const columnWidths = Array.from({ length: colCount }, (_, index) =>
-          index === 0 ? firstColWidth : otherColWidth,
-        );
-        const startX = margin;
-        const padX = 7;
-        const padY = 6;
-
-        rows.forEach((row, rowIndex) => {
-          const cellLines = row.map((cell, cellIndex) =>
-            doc.splitTextToSize(
-              stripMarkdownMarkers(cell || ""),
-              columnWidths[cellIndex] - padX * 2,
-            ),
-          );
-          const rowHeight =
-            Math.max(...cellLines.map((lines) => lines.length)) * lineHeight +
-            padY * 2;
-          ensureSpace(rowHeight + 4);
-
-          if (rowIndex === 0) {
-            doc.setFillColor(...BRAND);
-          } else if (rowIndex % 2 === 0) {
-            doc.setFillColor(236, 239, 255);
-          } else {
-            doc.setFillColor(255, 255, 255);
-          }
-          doc.rect(startX, cursorY - 11, usableWidth, rowHeight, "F");
-          doc.setDrawColor(210, 214, 219);
-          doc.rect(startX, cursorY - 11, usableWidth, rowHeight);
-
-          let cellX = startX;
-          const textColor = rowIndex === 0 ? [255, 255, 255] : INK;
-          row.forEach((cell, cellIndex) => {
-            if (cellIndex > 0) {
-              doc.line(cellX, cursorY - 11, cellX, cursorY - 11 + rowHeight);
-            }
-            doc.setFont("helvetica", rowIndex === 0 ? "bold" : "normal");
-            doc.setFontSize(10);
-            doc.setTextColor(...textColor);
-            const lines = cellLines[cellIndex];
-            lines.forEach((line, lineIndex) => {
-              doc.text(
-                line,
-                cellX + padX,
-                cursorY + padY + lineIndex * lineHeight - 1,
-              );
-            });
-            cellX += columnWidths[cellIndex];
-          });
-
-          cursorY += rowHeight;
-        });
-        cursorY += paragraphGap;
-        return;
-      }
-
-      if (block.type === "code") {
-        ensureSpace(28);
-        doc.setFont("courier", "normal");
-        doc.setFontSize(10);
-        doc.setTextColor(...INK);
-        const codeLines = block.text.split(/\r?\n/);
-        codeLines.forEach((codeLine) => {
-          const wrapped = doc.splitTextToSize(codeLine || " ", maxWidth - 12);
-          wrapped.forEach((segment) => {
-            ensureSpace(lineHeight);
-            doc.text(segment, margin + 6, cursorY);
-            cursorY += lineHeight;
-          });
-        });
-        cursorY += paragraphGap;
-      }
+    const projectName = title.trim() || selectedProject?.repo_url || "Ingested Repository";
+    return streamResult("document", {
+      kind: "document",
+      title: projectName,
+      path: "/document/stream",
+      body: { project_name: projectName, k: 25, project_ids: [selectedProjectId] },
     });
-
-    const totalPages = doc.internal.getNumberOfPages();
-    for (let page = 1; page <= totalPages; page += 1) {
-      doc.setPage(page);
-      doc.setDrawColor(...BRAND2);
-      doc.setLineWidth(0.75);
-      doc.line(margin, pageHeight - 30, pageWidth - margin, pageHeight - 30);
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(9);
-      doc.setTextColor(...MUTED);
-      doc.text(displayTitle, margin, pageHeight - 18);
-      doc.text(
-        `Page ${page} of ${totalPages}`,
-        pageWidth - margin,
-        pageHeight - 18,
-        {
-          align: "right",
-        },
-      );
-    }
-
-    doc.save(`${title}.pdf`);
   }
 
   async function checkForUpdates() {
@@ -694,9 +187,7 @@ function App() {
     setNotice(null);
     try {
       setProjectStatus(
-        await requestJson(
-          `/projects/${encodeURIComponent(selectedProjectId)}/status`,
-        ),
+        await requestJson(`/projects/${encodeURIComponent(selectedProjectId)}/status`),
       );
     } catch (error) {
       showNotice("error", error.message);
@@ -710,36 +201,13 @@ function App() {
     setBusyAction("refresh");
     setNotice(null);
     try {
-      const result = await requestJson(
+      const refreshed = await requestJson(
         `/projects/${encodeURIComponent(selectedProjectId)}/refresh`,
         { method: "POST" },
       );
-      if (result?.project_id) {
-        setProjects((current) =>
-          current.map((project) =>
-            project.project_id === result.project_id
-              ? {
-                  ...project,
-                  files_loaded:
-                    typeof result.files_loaded === "number"
-                      ? result.files_loaded
-                      : project.files_loaded,
-                  chunks_created:
-                    typeof result.chunks_created === "number"
-                      ? result.chunks_created
-                      : project.chunks_created,
-                  last_commit_sha:
-                    typeof result.commit_sha === "string"
-                      ? result.commit_sha
-                      : project.last_commit_sha,
-                }
-              : project,
-          ),
-        );
-      }
       await loadProjects();
       setProjectStatus(null);
-      showNotice("success", result.message);
+      showNotice("success", refreshed.message);
     } catch (error) {
       showNotice("error", error.message);
     } finally {
@@ -747,23 +215,16 @@ function App() {
     }
   }
 
-  function requestDeleteProject() {
-    if (!selectedProject) return;
-    setConfirmingProjectDelete(true);
-  }
-
   async function performDeleteProject() {
     setBusyAction("delete");
     try {
-      const result = await requestJson(
-        `/projects/${encodeURIComponent(selectedProjectId)}`,
-        { method: "DELETE" },
-      );
-      setAnswer(null);
-      setDocument(null);
+      const removed = await requestJson(`/projects/${encodeURIComponent(selectedProjectId)}`, {
+        method: "DELETE",
+      });
+      clearResult();
       setProjectStatus(null);
       await loadProjects();
-      showNotice("success", result.message);
+      showNotice("success", removed.message);
     } catch (error) {
       showNotice("error", error.message);
     } finally {
@@ -785,350 +246,84 @@ function App() {
     );
   }
 
+  const streaming = busyAction === "ask" || busyAction === "document";
+
   return (
     <div className="app-shell">
       <main className="workspace">
-        <header className="topbar">
-          <div className="hero-copy">
-            <span className="brand-row">
-              <img
-                className="brand-mark"
-                src={logoUrl}
-                alt=""
-                aria-hidden="true"
-              />
-              <span className="eyebrow">Reverse Engineering AI Agent</span>
-            </span>
-            <h1>Understand any codebase.</h1>
-            <p>
-              Ingest a repository, explore it with grounded answers, and
-              generate a technical document.
-            </p>
-          </div>
-          <div className="topbar-side">
-            <div className={`status-pill ${isBackendOnline ? "" : "offline"}`}>
-              <span className="status-dot" />
-              {backendStatus === "checking"
-                ? "Checking backend…"
-                : isBackendOnline
-                  ? "Backend ready"
-                  : "Backend offline"}
-            </div>
-            <AccountMenu
-              username={authUser?.username}
-              onSignOut={() => {
-                logout();
-                setAuthed(false);
-                setAuthUser(null);
-              }}
-              onDeleteAccount={async () => {
-                try {
-                  await deleteAccount();
-                  setAuthed(false);
-                  setAuthUser(null);
-                  setQuota(null);
-                  setProjects([]);
-                  setSelectedProjectId("");
-                } catch (error) {
-                  showNotice("error", error.message);
-                }
-              }}
-            />
-          </div>
-        </header>
+        <AppHeader
+          backendStatus={backendStatus}
+          username={authUser?.username}
+          onSignOut={() => {
+            logout();
+            resetSession();
+          }}
+          onDeleteAccount={async () => {
+            try {
+              await deleteAccount();
+              resetSession();
+            } catch (error) {
+              showNotice("error", error.message);
+            }
+          }}
+        />
         {notice && (
           <div className={`notice ${notice.type}`} role="status">
             {notice.message}
-            <button
-              onClick={() => setNotice(null)}
-              aria-label="Dismiss notification"
-            >
+            <button onClick={() => setNotice(null)} aria-label="Dismiss notification">
               ×
             </button>
           </div>
         )}
-        <section className="ingest-panel">
-          <div>
-            <span className="step-label">01 · Add a repository</span>
-            <h2>Start an analysis</h2>
-            <p>
-              Paste an HTTPS GitHub URL. Indexing runs in the background, so you
-              can see progress without guessing.
-            </p>
-          </div>
-          <form onSubmit={ingestRepository} className="ingest-form">
-            <input
-              aria-label="Repository URL"
-              value={repoUrl}
-              onChange={(event) => setRepoUrl(event.target.value)}
-              placeholder="https://github.com/owner/repository"
-              disabled={!isBackendOnline || busyAction === "ingest"}
-            />
-            <button
-              className="primary-button"
-              disabled={!isBackendOnline || busyAction === "ingest"}
-            >
-              {busyAction === "ingest" ? "Indexing…" : "Ingest repository"}
-            </button>
-          </form>
-          {ingestStage && (
-            <p className="progress-copy" aria-live="polite">
-              {ingestStage}
-            </p>
-          )}
-        </section>
-        <section className="project-bar">
-          <div className="project-picker" ref={projectPickerRef}>
-            <label htmlFor="project">Active project</label>
-            <div className={`select-shell ${projectPickerOpen ? "open" : ""}`}>
-              <button
-                type="button"
-                className="select-trigger"
-                aria-haspopup="listbox"
-                aria-expanded={projectPickerOpen}
-                onClick={() => setProjectPickerOpen((current) => !current)}
-                disabled={!projects.length}
-              >
-                <span className="select-trigger-label">
-                  {selectedProject?.repo_url ||
-                    (projects.length
-                      ? "Choose a project"
-                      : "No projects indexed yet")}
-                </span>
-                <span className="select-trigger-icon" aria-hidden="true" />
-              </button>
-              {projectPickerOpen && projects.length > 0 && (
-                <div
-                  className="select-menu"
-                  role="listbox"
-                  aria-label="Projects"
-                >
-                  {projects.map((project) => {
-                    const isActive = project.project_id === selectedProjectId;
-                    return (
-                      <button
-                        key={project.project_id}
-                        type="button"
-                        role="option"
-                        aria-selected={isActive}
-                        className={`select-option ${isActive ? "active" : ""}`}
-                        onClick={() => {
-                          setSelectedProjectId(project.project_id);
-                          setAnswer(null);
-                          setDocument(null);
-                          setProjectStatus(null);
-                          setProjectPickerOpen(false);
-                        }}
-                      >
-                        <span className="select-option-main">
-                          {project.repo_url}
-                        </span>
-                        <span className="select-option-meta">
-                          {project.files_loaded} files ·{" "}
-                          {project.chunks_created} chunks
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </div>
-          {selectedProject && (
-            <div className="project-meta">
-              <span>{selectedProject.files_loaded} files</span>
-              <span>{selectedProject.chunks_created} chunks</span>
-              <span title={selectedProject.last_commit_sha}>
-                commit {shortSha(selectedProject.last_commit_sha)}
-              </span>
-            </div>
-          )}
-          <div className="project-actions">
-            <button
-              onClick={checkForUpdates}
-              disabled={!selectedProjectId || busyAction}
-              className="text-button"
-            >
-              {busyAction === "status" ? "Checking…" : "Check updates"}
-            </button>
-            <button
-              onClick={requestDeleteProject}
-              disabled={!selectedProjectId || busyAction}
-              className="danger-button"
-            >
-              Remove
-            </button>
-          </div>
-        </section>
+        <IngestPanel
+          online={isBackendOnline}
+          busy={busyAction === "ingest"}
+          stage={ingestStage}
+          onIngest={ingestRepository}
+        />
+        <ProjectBar
+          projects={projects}
+          selectedProject={selectedProject}
+          onSelect={selectProject}
+          onCheckUpdates={checkForUpdates}
+          onRemove={() => selectedProject && setConfirmingProjectDelete(true)}
+          busyAction={busyAction}
+        />
         {projectStatus && (
-          <section
-            className={`update-card ${projectStatus.github?.has_new_commits ? "has-updates" : ""}`}
-          >
-            <div>
-              <strong>
-                {projectStatus.github?.has_new_commits
-                  ? "New commits found"
-                  : "Project is up to date"}
-              </strong>
-              <span>
-                Branch {projectStatus.github?.default_branch || "unknown"} ·{" "}
-                {projectStatus.github?.open_pr_count ?? "—"} open pull requests
-                · latest {shortSha(projectStatus.github?.current_commit_sha)}
-              </span>
-            </div>
-            {projectStatus.github?.has_new_commits && (
-              <button
-                className="primary-button compact"
-                onClick={refreshProject}
-                disabled={busyAction === "refresh"}
-              >
-                {busyAction === "refresh" ? "Refreshing…" : "Refresh index"}
-              </button>
-            )}
-          </section>
+          <UpdateCard
+            status={projectStatus}
+            refreshing={busyAction === "refresh"}
+            onRefresh={refreshProject}
+          />
         )}
         <section className="tool-grid">
-          <form className="tool-card" onSubmit={askQuestion}>
-            <span className="step-label">02 · Explore</span>
-            <h2>Ask the codebase</h2>
-            <p>
-              Answers are restricted to the active project and include source
-              paths.
-            </p>
-            <textarea
-              value={question}
-              onChange={(event) => setQuestion(event.target.value)}
-              placeholder="How does authentication work?"
-              rows="5"
-              disabled={queriesExhausted}
-            />
-            <button
-              className="primary-button"
-              disabled={
-                !selectedProjectId || busyAction === "ask" || queriesExhausted
-              }
-            >
-              {busyAction === "ask" ? "Finding evidence…" : "Ask agent"}
-            </button>
-            {quota && quota.queries_limit > 0 && (
-              <p className="quota-copy">
-                {queriesExhausted
-                  ? "You've used all your questions for today. The limit resets tomorrow."
-                  : `${quota.queries_limit - quota.queries_used} of ${quota.queries_limit} question${quota.queries_limit === 1 ? "" : "s"} left.`}
-              </p>
-            )}
-          </form>
-          <form className="tool-card" onSubmit={generateDocument}>
-            <span className="step-label">03 · Explain</span>
-            <h2>Generate a technical document</h2>
-            <p>
-              Get architecture, behavior, risk, and synthesis in a shareable
-              Markdown report.
-            </p>
-            <input
-              value={documentName}
-              onChange={(event) => setDocumentName(event.target.value)}
-              placeholder="Optional document title"
-              disabled={documentsExhausted}
-            />
-            <button
-              className="secondary-button"
-              disabled={
-                !selectedProjectId ||
-                busyAction === "document" ||
-                documentsExhausted
-              }
-            >
-              {busyAction === "document"
-                ? "Writing document…"
-                : "Generate document"}
-            </button>
-            {quota && quota.documents_limit > 0 && (
-              <p className="quota-copy">
-                {documentsExhausted
-                  ? "You've used all your technical documents for today. The limit resets tomorrow."
-                  : `${quota.documents_limit - quota.documents_used} of ${quota.documents_limit} document${quota.documents_limit === 1 ? "" : "s"} left.`}
-              </p>
-            )}
-          </form>
+          <AskPanel
+            hasProject={Boolean(selectedProjectId)}
+            busy={streaming}
+            quota={quota}
+            onAsk={askQuestion}
+          />
+          <DocumentPanel
+            hasProject={Boolean(selectedProjectId)}
+            busy={streaming}
+            quota={quota}
+            onGenerate={generateDocument}
+          />
         </section>
-        {(answer || document) && (
-          <section className="result-panel" aria-live="polite">
-            <div className="result-head">
-              <span className="step-label">
-                {answer ? "ANSWER" : "TECHNICAL DOCUMENT"}
-              </span>
-              <div className="result-actions">
-                {document && (
-                  <button className="text-button" onClick={downloadDocumentPdf}>
-                    Download PDF
-                  </button>
-                )}
-                <button
-                  className="text-button"
-                  onClick={async () => {
-                    try {
-                      await navigator.clipboard.writeText(
-                        answer?.answer || document?.document || "",
-                      );
-                      showNotice("success", "Copied to clipboard.");
-                    } catch {
-                      showNotice(
-                        "error",
-                        "Could not copy the result. Select the text and copy it manually.",
-                      );
-                    }
-                  }}
-                >
-                  Copy
-                </button>
-              </div>
-            </div>
-            <div
-              className="result-tabs"
-              role="tablist"
-              aria-label="Result views"
-            >
-              <button
-                type="button"
-                className={`tab-button ${resultTab === "main" ? "active" : ""}`}
-                onClick={() => setResultTab("main")}
-              >
-                {answer ? "Answer" : "Document"}
-              </button>
-              <button
-                type="button"
-                className={`tab-button ${resultTab === "sources" ? "active" : ""}`}
-                onClick={() => setResultTab("sources")}
-                disabled={
-                  !(answer?.sources?.length || document?.sources?.length)
-                }
-              >
-                Sources
-              </button>
-            </div>
-            {resultTab === "sources" ? (
-              <SourceList sources={answer?.sources || document?.sources} />
-            ) : (
-              <div className="markdown">
-                <ReactMarkdown
-                  remarkPlugins={[remarkGfm]}
-                  components={markdownComponents}
-                >
-                  {answer?.answer || normalizedDocument || ""}
-                </ReactMarkdown>
-              </div>
-            )}
-          </section>
+        {result && (
+          <ResultPanel
+            key={result.id}
+            result={result}
+            onStop={stop}
+            onNotice={showNotice}
+          />
         )}
       </main>
       {confirmingProjectDelete && selectedProject && (
         <ConfirmModal
           title="Remove this project?"
           message={`This deletes the indexed data for ${selectedProject.repo_url}. Existing answers and documents tied to it will be gone, but you can re-ingest the repository later.`}
-          confirmLabel={
-            busyAction === "delete" ? "Removing…" : "Remove project"
-          }
+          confirmLabel={busyAction === "delete" ? "Removing…" : "Remove project"}
           danger
           busy={busyAction === "delete"}
           onConfirm={performDeleteProject}
@@ -1137,425 +332,6 @@ function App() {
       )}
     </div>
   );
-}
-
-function ConfirmModal({
-  title,
-  message,
-  confirmLabel = "Confirm",
-  cancelLabel = "Cancel",
-  danger = false,
-  busy = false,
-  onConfirm,
-  onCancel,
-}) {
-  const cancelRef = useRef(null);
-
-  useEffect(() => {
-    cancelRef.current?.focus();
-  }, []);
-
-  useEffect(() => {
-    const handleKey = (event) => {
-      if (event.key === "Escape") onCancel();
-    };
-    document.addEventListener("keydown", handleKey);
-    return () => document.removeEventListener("keydown", handleKey);
-  }, [onCancel]);
-
-  return (
-    <div
-      className="modal-overlay"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onCancel();
-      }}
-    >
-      <div
-        className="modal-card"
-        role="alertdialog"
-        aria-modal="true"
-        aria-labelledby="confirm-modal-title"
-      >
-        <h3
-          id="confirm-modal-title"
-          className={`modal-title ${danger ? "danger" : ""}`}
-        >
-          {title}
-        </h3>
-        <p className="modal-message">{message}</p>
-        <div className="modal-actions">
-          <button
-            type="button"
-            ref={cancelRef}
-            className="secondary-button"
-            onClick={onCancel}
-            disabled={busy}
-          >
-            {cancelLabel}
-          </button>
-          <button
-            type="button"
-            className={danger ? "danger-button solid" : "primary-button"}
-            onClick={onConfirm}
-            disabled={busy}
-          >
-            {confirmLabel}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function AuthView({ onAuthenticated, backendStatus }) {
-  const [mode, setMode] = useState("login");
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [signupCode, setSignupCode] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-
-  const isRegister = mode === "register";
-  const offline = backendStatus === "offline";
-
-  function switchMode(next) {
-    if (next === mode) return;
-    setMode(next);
-    setError("");
-    setShowPassword(false);
-  }
-
-  async function submit(event) {
-    event.preventDefault();
-    setError("");
-    if (username.trim().length < 3) {
-      setError("Username must be at least 3 characters.");
-      return;
-    }
-    if (password.length < 8) {
-      setError("Password must be at least 8 characters.");
-      return;
-    }
-    setBusy(true);
-    try {
-      const { user } = isRegister
-        ? await register(username.trim(), password, signupCode.trim())
-        : await login(username.trim(), password);
-      onAuthenticated(user);
-    } catch (err) {
-      setError(err.message || "Authentication failed.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div className="app-shell auth-shell">
-      <div className="auth-bg" aria-hidden="true">
-        <div className="auth-bg-aurora" />
-        <div className="auth-bg-beam" />
-        <div className="auth-bg-particles">
-          {Array.from({ length: 20 }).map((_, i) => (
-            <span
-              key={i}
-              style={{
-                left: `${(i * 4.7 + (i % 4) * 3) % 100}%`,
-                animationDuration: `${11 + (i % 6) * 2.4}s`,
-                animationDelay: `${(i * 1.3) % 14}s`,
-              }}
-            />
-          ))}
-        </div>
-      </div>
-      <main className="auth-card">
-        <div className="auth-brand">
-          <img className="auth-mark" src={logoUrl} alt="" aria-hidden="true" />
-          <span className="auth-brand-name">Reverse Engineering AI Agent</span>
-        </div>
-
-        <div
-          className="auth-tabs"
-          role="tablist"
-          aria-label="Authentication mode"
-        >
-          <button
-            type="button"
-            role="tab"
-            aria-selected={!isRegister}
-            className={isRegister ? "" : "is-active"}
-            onClick={() => switchMode("login")}
-          >
-            Sign in
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={isRegister}
-            className={isRegister ? "is-active" : ""}
-            onClick={() => switchMode("register")}
-          >
-            Create account
-          </button>
-        </div>
-
-        <p className="auth-lede">
-          {isRegister
-            ? "Set up an account. Your ingested repositories stay private to you."
-            : "Sign in to ingest repositories and ask questions about them."}
-        </p>
-
-        <form className="auth-form" onSubmit={submit}>
-          <label className="field">
-            <span className="field-label">Username</span>
-            <input
-              autoComplete="username"
-              value={username}
-              onChange={(event) => setUsername(event.target.value)}
-              placeholder="Sam"
-              autoFocus
-            />
-          </label>
-
-          <label className="field">
-            <span className="field-label">Password</span>
-            <span className="field-input">
-              <input
-                type={showPassword ? "text" : "password"}
-                autoComplete={isRegister ? "new-password" : "current-password"}
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                placeholder={
-                  isRegister ? "At least 8 characters" : "Your password"
-                }
-              />
-              <button
-                type="button"
-                className="field-toggle"
-                onClick={() => setShowPassword((visible) => !visible)}
-                aria-label={showPassword ? "Hide password" : "Show password"}
-              >
-                {showPassword ? "Hide" : "Show"}
-              </button>
-            </span>
-          </label>
-
-          {isRegister && (
-            <label className="field">
-              <span className="field-label">Invite code</span>
-              <input
-                value={signupCode}
-                onChange={(event) => setSignupCode(event.target.value)}
-                placeholder="Provided by the site owner"
-              />
-            </label>
-          )}
-
-          {error && (
-            <div className="notice error" role="alert">
-              {error}
-            </div>
-          )}
-
-          <button
-            className="primary-button auth-submit"
-            disabled={busy || offline}
-          >
-            {busy && <span className="auth-spinner" aria-hidden="true" />}
-            {busy ? "Working…" : isRegister ? "Create account" : "Sign in"}
-          </button>
-        </form>
-
-        {offline && (
-          <p className="auth-status" role="status">
-            The backend looks offline — start it and try again.
-          </p>
-        )}
-      </main>
-      <p className="auth-footnote">
-        Clone a GitHub repo · chunk it · ask how it works
-      </p>
-    </div>
-  );
-}
-
-function initialsFrom(name) {
-  const parts = String(name)
-    .split(/[\s._-]+/)
-    .filter(Boolean);
-  if (parts.length >= 2) {
-    return (parts[0][0] + parts[1][0]).toUpperCase();
-  }
-  return (
-    String(name)
-      .replace(/[^a-z0-9]/gi, "")
-      .slice(0, 2)
-      .toUpperCase() || "?"
-  );
-}
-
-function AccountMenu({ username, onSignOut, onDeleteAccount }) {
-  const [open, setOpen] = useState(false);
-  const [confirmingDelete, setConfirmingDelete] = useState(false);
-  const [deleting, setDeleting] = useState(false);
-  const rootRef = useRef(null);
-  const name = username || "Account";
-  const displayName = name.charAt(0).toUpperCase() + name.slice(1);
-
-  useEffect(() => {
-    if (!open) return undefined;
-    const handlePointer = (event) => {
-      if (rootRef.current && !rootRef.current.contains(event.target)) {
-        setOpen(false);
-      }
-    };
-    const handleKey = (event) => {
-      if (event.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("mousedown", handlePointer);
-    document.addEventListener("keydown", handleKey);
-    return () => {
-      document.removeEventListener("mousedown", handlePointer);
-      document.removeEventListener("keydown", handleKey);
-    };
-  }, [open]);
-
-  return (
-    <div className="account-menu" ref={rootRef}>
-      <button
-        type="button"
-        className="account-trigger"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        aria-label={`Account menu for ${displayName}`}
-        onClick={() => setOpen((value) => !value)}
-      >
-        <span className="account-avatar" aria-hidden="true">
-          {initialsFrom(name)}
-        </span>
-        <span className="account-name">{displayName}</span>
-        <svg
-          className="account-caret"
-          width="12"
-          height="12"
-          viewBox="0 0 12 12"
-          aria-hidden="true"
-        >
-          <path
-            d="M2.5 4.5 6 8l3.5-3.5"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.6"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
-      </button>
-
-      {open && (
-        <div className="account-popover" role="menu">
-          <div className="account-popover-head">
-            <span
-              className="account-avatar account-avatar-lg"
-              aria-hidden="true"
-            >
-              {initialsFrom(name)}
-            </span>
-            <span className="account-popover-meta">
-              <span className="account-popover-label">Signed in as</span>
-              <span className="account-popover-name">{displayName}</span>
-            </span>
-          </div>
-          <button
-            type="button"
-            className="account-menu-item"
-            role="menuitem"
-            onClick={() => {
-              setOpen(false);
-              onSignOut();
-            }}
-          >
-            <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
-              <path
-                d="M6 2H3.6A1.6 1.6 0 0 0 2 3.6v8.8A1.6 1.6 0 0 0 3.6 14H6M10.5 11 14 8l-3.5-3M13.5 8H6"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.4"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-            Sign out
-          </button>
-          <button
-            type="button"
-            className="account-menu-item danger"
-            role="menuitem"
-            onClick={() => {
-              setOpen(false);
-              setConfirmingDelete(true);
-            }}
-          >
-            <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
-              <path
-                d="M3 4h10M6.5 4V2.8A.8.8 0 0 1 7.3 2h1.4a.8.8 0 0 1 .8.8V4M12 4l-.6 8.3a1.2 1.2 0 0 1-1.2 1.1H5.8a1.2 1.2 0 0 1-1.2-1.1L4 4M6.7 7v4M9.3 7v4"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.4"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-            Delete account
-          </button>
-        </div>
-      )}
-      {confirmingDelete && (
-        <ConfirmModal
-          title="Delete your account?"
-          message="This permanently removes your account and every repository you've ingested. This cannot be undone."
-          confirmLabel={deleting ? "Deleting…" : "Delete account"}
-          danger
-          busy={deleting}
-          onConfirm={async () => {
-            setDeleting(true);
-            try {
-              await onDeleteAccount();
-              setConfirmingDelete(false);
-            } finally {
-              setDeleting(false);
-            }
-          }}
-          onCancel={() => setConfirmingDelete(false)}
-        />
-      )}
-    </div>
-  );
-}
-
-function SourceList({ sources = [] }) {
-  const rows = formatSourceRows(sources);
-  return rows.length ? (
-    <div className="sources">
-      <strong>Grounding sources</strong>
-      <div className="source-table" role="table" aria-label="Grounding sources">
-        <div className="source-table-head" role="row">
-          <span role="columnheader">#</span>
-          <span role="columnheader">Source</span>
-        </div>
-        {rows.map((row) => (
-          <div
-            className="source-table-row"
-            role="row"
-            key={`${row.index}-${row.text}`}
-          >
-            <span role="cell">{row.index}</span>
-            <span role="cell">{row.text}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  ) : null;
 }
 
 export default App;
