@@ -20,6 +20,11 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.*;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.stream.Collectors;
 
 @Service
@@ -268,10 +273,7 @@ public class RagService {
             return cached.get();
         }
 
-        List<Document> retrieved = retrieveDocumentsForDocumentGeneration(
-                normalizedProjectIds, effectiveK, ownerId);
-        List<Document> deduped = selectDiverseDocuments(
-                deduplicateDocuments(retrieved), effectiveK);
+        List<Document> deduped = retrieveDocumentEvidence(normalizedProjectIds, effectiveK, ownerId);
 
         List<ProjectInfo> scopedProjects = registry.findByIdsForOwner(normalizedProjectIds, ownerId);
 
@@ -491,19 +493,44 @@ public class RagService {
                 .toList();
     }
 
-    private List<Document> retrieveDocumentsForDocumentGeneration(
-            List<String> projectIds, int k, Long ownerId) {
-        String retrievalQuery = String.join(" ",
-                "application entry points startup initialization routing controllers API endpoints",
-                "overall architecture modules services components layers package structure",
-                "data flow request flow business logic database persistence models schemas",
-                "configuration environment variables secrets settings deployment dependencies",
-                "authentication authorization security validation error handling external integrations",
-                "important classes functions interfaces utilities background jobs clients");
+    /**
+     * The {@code k} chunks a generated document is written from.
+     *
+     * <p>Each topic in {@link DocumentEvidence#ASPECTS} is searched separately
+     * (vector plus keyword search when enabled), in parallel; the ranked lists
+     * are merged by reciprocal rank fusion, so a chunk that ranks well for any
+     * topic surfaces, and {@link DocumentEvidence#select} then favours source
+     * code over config, tests, docs and boilerplate. Public so the retrieval
+     * evaluation can measure it.</p>
+     */
+    public List<Document> retrieveDocumentEvidence(List<String> projectIds, int k, Long ownerId) {
+        int perAspect = Math.min(props.maxDocumentK(), Math.max(
+                MIN_DOCUMENT_RETRIEVAL_K,
+                Math.ceilDiv(k * 3, DocumentEvidence.ASPECTS.size())));
+        boolean hybrid = props.hybridSearchEnabled() && keywordSearch.isAvailable();
+        String ownerKey = ownerKey(ownerId);
 
-        int searchK = Math.min(Math.max(k * 3, MIN_DOCUMENT_RETRIEVAL_K), props.maxDocumentK());
-        return vectorStore.similaritySearch(
-                buildSearchRequest(retrievalQuery, searchK, projectIds, ownerId));
+        List<Callable<List<Document>>> searches = new ArrayList<>();
+        for (String aspect : DocumentEvidence.ASPECTS) {
+            searches.add(() -> vectorStore.similaritySearch(
+                    buildSearchRequest(aspect, perAspect, projectIds, ownerId)));
+            if (hybrid) {
+                searches.add(() -> keywordSearch.search(aspect, perAspect, projectIds, ownerKey));
+            }
+        }
+        List<List<Document>> rankings = new ArrayList<>(searches.size());
+        try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            for (Future<List<Document>> result : executor.invokeAll(searches)) {
+                rankings.add(result.get());
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Document retrieval was interrupted.", e);
+        } catch (ExecutionException e) {
+            throw e.getCause() instanceof RuntimeException re
+                    ? re : new IllegalStateException("Document retrieval failed.", e.getCause());
+        }
+        return DocumentEvidence.select(deduplicateDocuments(reciprocalRankFusion(rankings)), k);
     }
 
     private static int retrievalCandidateCount(int requestedK, int maximumK) {
