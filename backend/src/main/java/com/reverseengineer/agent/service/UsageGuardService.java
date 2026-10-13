@@ -95,7 +95,8 @@ public class UsageGuardService {
      * from all passing the check before any of them records usage.
      */
     public boolean isWithinBudget(String identity) {
-        if (currentUsage(identity) >= config.dailyTokenBudget()) {
+        long idBudget = config.dailyTokenBudget();
+        if (idBudget > 0 && currentUsage(identity) >= idBudget) {
             return false;
         }
         long globalBudget = config.globalDailyTokenBudget();
@@ -203,7 +204,7 @@ public class UsageGuardService {
                 String.format("%.5f", cost), usageToday, config.dailyTokenBudget(),
                 globalToday, config.globalDailyTokenBudget());
 
-        if (usageToday >= config.dailyTokenBudget()) {
+        if (config.dailyTokenBudget() > 0 && usageToday >= config.dailyTokenBudget()) {
             log.warn("Identity '{}' has reached its daily token budget ({} tokens).",
                     identity, config.dailyTokenBudget());
         }
