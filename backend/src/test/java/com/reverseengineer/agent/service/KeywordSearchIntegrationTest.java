@@ -1,5 +1,6 @@
 package com.reverseengineer.agent.service;
 
+import com.reverseengineer.agent.RequiresDocker;
 import com.reverseengineer.agent.TestcontainersConfiguration;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -15,6 +16,7 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 /** Runs the real generated column and queries against pgvector (needs Docker). */
+@RequiresDocker
 @SpringBootTest
 @ActiveProfiles("test")
 @Import(TestcontainersConfiguration.class)
