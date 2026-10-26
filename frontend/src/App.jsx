@@ -10,6 +10,7 @@ import {
   requestJson,
 } from "./apiClient.js";
 import { isExhausted } from "./lib/format.js";
+import { useConversation } from "./hooks/useConversation.js";
 import { useStreamingResult } from "./hooks/useStreamingResult.js";
 import AppHeader from "./components/AppHeader.jsx";
 import AskPanel from "./components/AskPanel.jsx";
@@ -36,11 +37,23 @@ function App() {
   const [authUser, setAuthUser] = useState(() => getStoredUser());
   const [quota, setQuota] = useState(null);
   const [confirmingProjectDelete, setConfirmingProjectDelete] = useState(false);
-  const { result, run, stop, clear: clearResult } = useStreamingResult();
+  const conversation = useConversation();
+  const {
+    result: documentResult,
+    run: runDocument,
+    stop: stopDocument,
+    clear: clearDocument,
+  } = useStreamingResult();
+  const { reset: resetConversation } = conversation;
 
   const showNotice = useCallback((type, message) => setNotice({ type, message }), []);
   const selectedProject = projects.find((project) => project.project_id === selectedProjectId);
   const isBackendOnline = backendStatus === "online";
+
+  const clearResults = useCallback(() => {
+    resetConversation();
+    clearDocument();
+  }, [resetConversation, clearDocument]);
 
   const resetSession = useCallback(() => {
     setAuthed(false);
@@ -48,8 +61,8 @@ function App() {
     setQuota(null);
     setProjects([]);
     setSelectedProjectId("");
-    clearResult();
-  }, [clearResult]);
+    clearResults();
+  }, [clearResults]);
 
   useEffect(() => {
     window.addEventListener(AUTH_EVENT, resetSession);
@@ -105,7 +118,7 @@ function App() {
   function selectProject(projectId) {
     setSelectedProjectId(projectId);
     setProjectStatus(null);
-    clearResult();
+    clearResults();
   }
 
   async function ingestRepository(repoUrl) {
@@ -141,27 +154,34 @@ function App() {
     }
   }
 
-  /** Streams an answer or document into the result panel; quota is re-read afterwards. */
-  async function streamResult(action, request) {
+  /** Runs `start()` (a streamed answer or document); quota is re-read afterwards. */
+  async function streamResult(action, start) {
     setBusyAction(action);
     setNotice(null);
-    const outcome = await run(request);
+    const outcome = await start();
     if (outcome.error) showNotice("error", outcome.error.message);
     setBusyAction("");
     refreshQuota();
+    return outcome;
   }
 
+  /** Adds a question to the conversation; null when it can't be sent (a notice says why). */
   function askQuestion(question) {
-    if (!question.trim()) return showNotice("error", "Write a question before asking the agent.");
-    if (!selectedProjectId)
-      return showNotice("error", "Ingest and select a project before asking a question.");
+    const reject = (message) => {
+      showNotice("error", message);
+      return null;
+    };
+    if (!question.trim()) return reject("Write a question before asking the agent.");
+    if (!selectedProjectId) return reject("Ingest and select a project before asking a question.");
     if (isExhausted(quota?.queries_used, quota?.queries_limit))
-      return showNotice("error", "You've used all your questions for today. The limit resets tomorrow.");
-    return streamResult("ask", {
-      kind: "answer",
-      path: "/query/stream",
-      body: { question, k: 5, project_ids: [selectedProjectId] },
-    });
+      return reject("You've used all your questions for today. The limit resets tomorrow.");
+    return streamResult("ask", () =>
+      conversation.ask(question.trim(), {
+        kind: "answer",
+        path: "/query/stream",
+        body: { question, k: 5, project_ids: [selectedProjectId] },
+      }),
+    );
   }
 
   function generateDocument(title) {
@@ -173,12 +193,14 @@ function App() {
         "You've used all your technical documents for today. The limit resets tomorrow.",
       );
     const projectName = title.trim() || selectedProject?.repo_url || "Ingested Repository";
-    return streamResult("document", {
-      kind: "document",
-      title: projectName,
-      path: "/document/stream",
-      body: { project_name: projectName, k: 25, project_ids: [selectedProjectId] },
-    });
+    return streamResult("document", () =>
+      runDocument({
+        kind: "document",
+        title: projectName,
+        path: "/document/stream",
+        body: { project_name: projectName, k: 25, project_ids: [selectedProjectId] },
+      }),
+    );
   }
 
   async function checkForUpdates() {
@@ -221,7 +243,7 @@ function App() {
       const removed = await requestJson(`/projects/${encodeURIComponent(selectedProjectId)}`, {
         method: "DELETE",
       });
-      clearResult();
+      clearResults();
       setProjectStatus(null);
       await loadProjects();
       showNotice("success", removed.message);
@@ -301,7 +323,11 @@ function App() {
             hasProject={Boolean(selectedProjectId)}
             busy={streaming}
             quota={quota}
+            turns={conversation.turns}
             onAsk={askQuestion}
+            onStop={conversation.stop}
+            onNewConversation={resetConversation}
+            onNotice={showNotice}
           />
           <DocumentPanel
             hasProject={Boolean(selectedProjectId)}
@@ -310,11 +336,11 @@ function App() {
             onGenerate={generateDocument}
           />
         </section>
-        {result && (
+        {documentResult && (
           <ResultPanel
-            key={result.id}
-            result={result}
-            onStop={stop}
+            key={documentResult.id}
+            result={documentResult}
+            onStop={stopDocument}
             onNotice={showNotice}
           />
         )}
