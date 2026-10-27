@@ -197,12 +197,15 @@ public class RepoLoaderService {
      * The first {@code maxChars} characters of the clone's top-level README
      * (README, README.md, README.rst, ... in any case), or {@code null} if there
      * is none or it cannot be read as UTF-8.
+     *
+     * <p>A symlinked README is ignored: a cloned repo controls its link targets, and
+     * following one (e.g. to {@code /proc/self/environ}) would feed server files into the prompt.
      */
     public String readReadme(Path repoPath, int maxChars) {
         if (!Files.isDirectory(repoPath)) return null;
         try (var entries = Files.list(repoPath)) {
             Optional<Path> readme = entries
-                    .filter(Files::isRegularFile)
+                    .filter(p -> Files.isRegularFile(p, LinkOption.NOFOLLOW_LINKS))
                     .filter(p -> p.getFileName().toString().toLowerCase().matches("readme(\\.(md|markdown|rst|txt|adoc))?"))
                     .sorted()
                     .findFirst();
