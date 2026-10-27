@@ -133,7 +133,7 @@ h2 {
 
 .topbar p,
 .ingest-panel p,
-.tool-card p {
+.tool-card > p {
   color: var(--muted);
   line-height: 1.65;
   margin-bottom: 0;
@@ -506,13 +506,88 @@ textarea {
   min-height: 320px;
 }
 
-.tool-card p {
+.tool-card > p {
   min-height: 48px;
 }
 
-.tool-card button {
+.tool-card > button {
   margin-top: auto;
   width: 100%;
+}
+
+/* ── Conversation ─────────────────────────────────────────────────────────── */
+.tool-card.conversation-active {
+  grid-column: 1 / -1;
+}
+
+.ask-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ask-head h2 {
+  margin: 4px 0 0;
+}
+
+.ask-head .text-button {
+  white-space: nowrap;
+}
+
+.conversation {
+  display: grid;
+  gap: 18px;
+  margin: 4px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.turn {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.turn-question {
+  justify-self: end;
+  max-width: min(80%, 640px);
+  margin: 0;
+  padding: 10px 14px;
+  border: 1px solid rgba(124, 140, 255, 0.24);
+  border-radius: 14px 14px 4px 14px;
+  background: rgba(124, 140, 255, 0.12);
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.turn-answer {
+  min-width: 0;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.turn-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 34px;
+}
+
+.turn-empty {
+  margin: 8px 0;
+  color: var(--muted);
+}
+
+details.sources summary {
+  width: fit-content;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 700;
 }
 
 .result-panel {
