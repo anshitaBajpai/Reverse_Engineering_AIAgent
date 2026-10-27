@@ -1,17 +1,8 @@
 import { useMemo, useState } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { prepareDocument } from "../lib/markdown.js";
 import { exportDocumentPdf } from "../lib/pdf.js";
+import Markdown from "./Markdown.jsx";
 import SourceList from "./SourceList.jsx";
-
-const MARKDOWN_COMPONENTS = {
-  table: ({ children }) => (
-    <div className="markdown-table-wrap">
-      <table className="markdown-table">{children}</table>
-    </div>
-  ),
-};
 
 const CHAIN_STEPS = [
   { name: "architecture_extraction", label: "Architecture and components" },
@@ -92,11 +83,7 @@ export default function ResultPanel({ result, onStop, onNotice }) {
       ) : waiting ? (
         <StreamProgress result={result} />
       ) : (
-        <div className={`markdown ${result.streaming ? "streaming" : ""}`}>
-          <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>
-            {text}
-          </ReactMarkdown>
-        </div>
+        <Markdown text={text} streaming={result.streaming} />
       )}
     </section>
   );
